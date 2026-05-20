@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Module name="SoC" Register="234" Lut="404" T_Register="3495(234)" T_Alu="466(0)" T_Lut="6089(404)" T_MULT36X36="3(0)" T_Bsram="46(0)" T_Ssram="223(0)">
+ <SubModule name="rpll_270_inst"/>
+ <SubModule name="r_clock"/>
+ <SubModule name="u_Gowin_rPLL_VGA"/>
+ <SubModule name="vram" Register="3" Lut="189" Bsram="29" T_Register="3(3)" T_Lut="189(189)" T_Bsram="29(29)"/>
+ <SubModule name="debug_uart" Register="40" Lut="79" T_Register="40(40)" T_Lut="79(79)"/>
+ <SubModule name="spi_inst" Register="146" Lut="180" T_Register="146(146)" T_Lut="180(180)"/>
+ <SubModule name="u_uart2PS2" Register="350" Lut="546" T_Register="350(350)" T_Lut="546(546)"/>
+ <SubModule name="u_soc_cpu" Register="1193" Alu="249" Lut="2547" MULT36X36="3" T_Register="1325(1193)" T_Alu="268(249)" T_Lut="3041(2547)" T_MULT36X36="3(3)" T_Bsram="9(0)" T_Ssram="112(0)">
+  <SubModule name="icache_inst" Register="76" Lut="262" Bsram="4" Ssram="80" T_Register="76(76)" T_Lut="262(262)" T_Bsram="4(4)" T_Ssram="80(80)"/>
+  <SubModule name="dcache_inst" Register="56" Alu="19" Lut="94" Bsram="5" T_Register="56(56)" T_Alu="19(19)" T_Lut="94(94)" T_Bsram="5(5)"/>
+  <SubModule name="cpu_register_controller" Lut="138" Ssram="32" T_Lut="138(138)" T_Ssram="32(32)"/>
+ </SubModule>
+ <SubModule name="u_hdmi" Register="73" Alu="69" Lut="247" T_Register="101(73)" T_Alu="96(69)" T_Lut="286(247)">
+  <SubModule name="u_vga" Register="28" Alu="27" Lut="39" T_Register="28(28)" T_Alu="27(27)" T_Lut="39(39)"/>
+ </SubModule>
+ <SubModule name="main_ram" Register="1296" Alu="102" Lut="1364" Bsram="8" Ssram="111" T_Register="1296(1296)" T_Alu="102(102)" T_Lut="1364(1364)" T_Bsram="8(8)" T_Ssram="111(111)"/>
+</Module>

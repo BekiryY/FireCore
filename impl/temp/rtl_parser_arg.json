@@ -1,0 +1,77 @@
+{
+ "Device" : "GW2A-18C",
+ "Files" : [
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/CPU_Registers.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/DCache.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/HDMI_Top.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/ICache.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SPI.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC_CPU.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/UART.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/VGA.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/ddr3_memory_interface/ddr3_memory_interface.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/dvi_tx/dvi_tx.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/gowin_rpll/gowin_rpll.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/gowin_rpll_2/gowin_rpll_2.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/gowin_sdpb/gowin_sdpb.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/rpll_270/rpll_270.v",
+   "Type" : "verilog"
+  },
+  {
+   "Path" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/uart2PS2.v",
+   "Type" : "verilog"
+  }
+ ],
+ "IncludePath" : [
+
+ ],
+ "LoopLimit" : 2000,
+ "ResultFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/impl/temp/rtl_parser.result",
+ "Top" : "SoC",
+ "VerilogStd" : "sysv",
+ "VhdlStd" : "vhdl_93"
+}

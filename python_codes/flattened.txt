@@ -1,0 +1,2573 @@
+================================================================================
+// FILE: CPU_Registers.v
+================================================================================
+
+module CPU_Registers( //LUT Memory
+    input clk,
+    
+    // Read Port 1
+    input [4:0] read1_addr,
+    output [31:0] read1_data,
+    
+    // Read Port 2
+    input [4:0] read2_addr,
+    output [31:0] read2_data,
+    
+    // Write Port
+    input [4:0] write_addr,
+    input [31:0] write_data,
+    input write_enable
+);
+
+    // Create the 32 registers, each 32 bits wide! (Synthesizer will turn this into LUTs)
+    reg [31:0] registers [0:31]; 
+    
+    // Initialize everything to 0 on startup
+    integer i;
+    initial begin
+        for (i = 0; i < 32; i = i + 1) begin
+            registers[i] = 32'd0;
+        end
+    end
+
+    // --- ASYNCHRONOUS READS (Instant data output) ---
+    // If address is 0, always output 0. Otherwise, output the register data.
+    assign read1_data = (read1_addr == 5'd0) ? 32'd0 : registers[read1_addr];
+    assign read2_data = (read2_addr == 5'd0) ? 32'd0 : registers[read2_addr];
+
+    // --- SYNCHRONOUS WRITE (Saves data on the clock edge) ---
+    always @(posedge clk) begin
+        if (write_enable && write_addr != 5'd0) begin
+            registers[write_addr] <= write_data;
+        end
+    end
+
+
+endmodule
+
+
+================================================================================
+// FILE: HDMI_Top.v
+================================================================================
+
+// HDMI_Top.v
+// Wraps VGA_Controller and connects to Gowin DVI TX IP.
+// No manual TMDS encoding needed — IP handles everything.
+// Clocks from Main.v:
+//   pix_clk      = 25.2 MHz  (vga_clk, from clkdiv5)
+//   tmds_clk     = 126 MHz   (hdmi_serial_clk, from rpll_126, 5x pixel clock)
+
+module HDMI_Top (
+    input  wire        pix_clk,        // 25.2 MHz pixel clock
+    input  wire        tmds_clk,       // 126 MHz serial clock (5x pix_clk)
+    input  wire        sys_rst_n,
+
+    // VRAM interface (pass-through to VGA_Controller)
+    output wire [13:0] vram_read_addr,
+    output wire        vram_read_en,
+    input  wire [31:0] vram_read_data,
+
+    // V-sync for IO register 0x4040_0000
+    output wire        vsync_out,
+
+    // HDMI differential outputs
+    output wire        tmds_clk_p,
+    output wire        tmds_clk_n,
+    output wire [2:0]  tmds_data_p,
+    output wire [2:0]  tmds_data_n
+);
+
+// -------------------------------------------------------
+// VGA Controller (unchanged)
+// -------------------------------------------------------
+wire h_sync, v_sync;
+wire [2:0] red_3;
+wire [2:0] green_3;
+wire [1:0] blue_2;
+
+assign vsync_out = v_sync;
+
+VGA_Controller u_vga (
+    .sys_clk        (pix_clk),
+    .sys_rst_n      (sys_rst_n),
+    .vram_read_addr (vram_read_addr),
+    .vram_read_en   (vram_read_en),
+    .vram_read_data (vram_read_data),
+    .h_sync_i       (h_sync),
+    .v_sync_i       (v_sync),
+    .RED            (red_3),
+    .GREEN          (green_3),
+    .BLUE           (blue_2)
+);
+
+// -------------------------------------------------------
+// RGB332 -> RGB888 expansion
+// -------------------------------------------------------
+wire [7:0] red_8   = {red_3,   red_3,   red_3[2:1]};
+wire [7:0] green_8 = {green_3, green_3, green_3[2:1]};
+wire [7:0] blue_8  = {blue_2,  blue_2,  blue_2,  blue_2};
+
+// -------------------------------------------------------
+// Active video (data enable) signal for DVI TX IP
+// -------------------------------------------------------
+localparam H_ACTIVE = 640;
+localparam H_TOTAL  = 800;
+localparam V_ACTIVE = 480;
+localparam V_TOTAL  = 525;
+
+reg [9:0] h_cnt = 0;
+reg [9:0] v_cnt = 0;
+
+always @(posedge pix_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        h_cnt <= 0;
+        v_cnt <= 0;
+    end else begin
+        if (h_cnt == H_TOTAL - 1) begin
+            h_cnt <= 0;
+            v_cnt <= (v_cnt == V_TOTAL - 1) ? 10'd0 : v_cnt + 10'd1;
+        end else begin
+            h_cnt <= h_cnt + 10'd1;
+        end
+    end
+end
+
+wire de = (h_cnt < H_ACTIVE) && (v_cnt < V_ACTIVE);
+
+// -------------------------------------------------------
+// Gowin DVI TX IP
+// -------------------------------------------------------
+DVI_TX_Top u_dvi_tx (
+    .I_rst_n       (sys_rst_n),
+    .I_serial_clk  (tmds_clk),    // 126 MHz
+    .I_rgb_clk     (pix_clk),     // 25.2 MHz
+    .I_rgb_vs      (v_sync),
+    .I_rgb_hs      (h_sync),
+    .I_rgb_de      (de),
+    .I_rgb_r       (red_8),
+    .I_rgb_g       (green_8),
+    .I_rgb_b       (blue_8),
+    .O_tmds_clk_p  (tmds_clk_p),
+    .O_tmds_clk_n  (tmds_clk_n),
+    .O_tmds_data_p (tmds_data_p),
+    .O_tmds_data_n (tmds_data_n)
+);
+
+endmodule
+
+================================================================================
+// FILE: Mainv3.v
+================================================================================
+
+module Main_Computer(
+    input sys_clk,
+    input sys_rst_n,
+    input MISO,
+    input PS2_DATA_I,
+    input PS2_CLK_I,
+    output PS2_DATA_DEBUG,
+    output PS2_CLK_DEBUG,
+    input RX,
+    output TX,
+    output wire MOSI,
+    output wire SPI_CS,
+    output wire SPI_CLK,
+    output wire debug_cs,
+    output wire debug_clk,
+    output wire debug_mosi,
+    output wire debug_miso,
+
+    output [13:0] ddr_addr,
+    output [2:0]  ddr_bank,
+    output        ddr_cs,
+
+    output        ddr_ras,
+    output        ddr_cas,
+    output        ddr_we,
+    output        ddr_ck,
+    output        ddr_ck_n,
+    output        ddr_cke,
+    output        ddr_odt,
+    output        ddr_reset_n,
+    output [1:0]  ddr_dm,
+    inout  [15:0] ddr_dq,
+    inout  [1:0]  ddr_dqs,
+    inout  [1:0]  ddr_dqs_n,
+
+    // HDMI TMDS outputs (replaces VGA)
+    output wire        tmds_clk_p,
+    output wire        tmds_clk_n,
+    output wire [2:0]  tmds_data_p,
+    output wire [2:0]  tmds_data_n
+);
+
+assign debug_cs = SPI_CS;
+assign debug_clk = SPI_CLK;
+assign debug_mosi = MOSI;
+assign debug_miso = MISO;
+
+assign PS2_DATA_DEBUG = ~PS2_DATA_I;
+assign PS2_CLK_DEBUG = ~PS2_CLK_I;
+
+// ==============================================================================
+// 1. HARDWARE ARBITER & MULTIPLEXER WIRES
+// ==============================================================================
+wire [2:0]   ddr_cmd;
+wire         ddr_cmd_en;
+wire [26:0]  user_addr;
+wire [127:0] ddr_wr_data;
+wire         ddr_wr_data_en;
+wire         ddr_wr_data_end;
+wire [15:0]  ddr_wr_data_mask;
+wire [7:0]   uart_data;
+wire         uart_wr_en;
+
+reg boot_done = 0;
+reg cpu_done  = 0;
+
+wire cpu_active = (boot_done == 1 && cpu_done == 0);
+
+assign ddr_cmd          = cpu_active ? cpu_ddr_cmd          : boot_ddr_cmd;
+assign ddr_cmd_en       = cpu_active ? cpu_ddr_cmd_en       : boot_ddr_cmd_en;
+assign user_addr        = cpu_active ? cpu_user_addr        : boot_user_addr;
+assign ddr_wr_data      = cpu_active ? cpu_ddr_wr_data      : boot_ddr_wr_data;
+assign ddr_wr_data_en   = cpu_active ? cpu_ddr_wr_data_en   : boot_ddr_wr_data_en;
+assign ddr_wr_data_end  = cpu_active ? cpu_ddr_wr_data_end  : boot_ddr_wr_data_end;
+assign ddr_wr_data_mask = cpu_active ? cpu_ddr_wr_data_mask : boot_ddr_wr_data_mask;
+assign uart_data        = cpu_active ? cpu_uart_data        : boot_uart_data;
+assign uart_wr_en       = cpu_active ? cpu_uart_wr_en       : boot_uart_wr_en;
+
+// CPU IO READS (doomgeneric uyumlu)
+wire [31:0]  ps2_data;        // IO 0x4010_0000 — live tuş bitmask
+wire [31:0]  ps2_key_event;   // IO 0x4010_0004 — son tuş event {press[31], doomkey[7:0]}
+wire         ps2_key_ev_valid; // KEY_EVENT geçerliliği (1-saat pulse)
+
+// ==============================================================================
+// 2. DDR3 MEMORY INTERFACE
+// ==============================================================================
+wire ddr_memory_clk;
+wire ddr_pll_lock;
+wire ddr_user_clk;
+wire ddr_logic_rst;
+wire ddr_calib_complete;
+wire ddr_cmd_ready;
+wire ddr_wr_data_rdy;
+wire [127:0] ddr_rd_data;
+wire ddr_rd_data_valid;
+wire ddr_rd_data_end;
+
+// ==============================================================================
+// INSTRUCTION CACHE (ICache)
+// Forward declare program_counter (defined as reg later) to avoid implicit
+// declaration warning when used in ICache port connection below.
+// ==============================================================================
+wire        icache_hit;    // kombinasyonel hit sinyali
+wire [31:0] icache_data;   // cache'den gelen instrüksiyon (1 saat gecikme)
+wire        icache_valid;  // 1 = icache_data gecerli
+reg         icache_fill_en   = 0;
+reg [31:0]  icache_fill_addr = 0;
+reg [127:0] icache_fill_data = 0;
+reg         icache_req       = 0;
+reg [31:0]  program_counter  = 0;  // forward declaration (kullanımdan önce)
+
+ICache icache_inst (
+    .clk       (ddr_user_clk),
+    .rst_n     (sys_rst_n),
+    .cpu_addr  (program_counter),
+    .cpu_req   (icache_req),
+    .cpu_data  (icache_data),
+    .cpu_valid (icache_valid),
+    .cache_hit (icache_hit),
+    .fill_addr (icache_fill_addr),
+    .fill_data (icache_fill_data),
+    .fill_en   (icache_fill_en)
+);
+
+wire lock_270;
+wire clk_270;
+
+rpll_270 rpll_270_inst(
+        .clkout(clk_270), //output clkout
+        .lock(lock_270), //output lock
+        .clkin(sys_clk) //input clkin
+);
+
+Gowin_rPLL r_clock(
+    .clkout(ddr_memory_clk),
+    .lock(ddr_pll_lock),
+    .reset(~sys_rst_n), 
+    .clkin(clk_270)
+);
+
+DDR3_Memory_Interface_Top main_ram(
+    .clk(sys_clk),
+    .memory_clk(ddr_memory_clk),
+    .pll_lock(ddr_pll_lock & lock_270),
+    .rst_n(sys_rst_n),
+    .clk_out(ddr_user_clk),
+    .ddr_rst(ddr_logic_rst),
+    .init_calib_complete(ddr_calib_complete),
+    .app_burst_number(6'b000000),
+    .cmd_ready(ddr_cmd_ready),
+    .cmd(ddr_cmd),
+    .cmd_en(ddr_cmd_en),
+    .addr({1'b0, user_addr}),
+    .wr_data_rdy(ddr_wr_data_rdy),
+    .wr_data(ddr_wr_data),
+    .wr_data_en(ddr_wr_data_en),
+    .wr_data_end(ddr_wr_data_end),
+    .wr_data_mask(ddr_wr_data_mask),
+    .rd_data(ddr_rd_data),
+    .rd_data_valid(ddr_rd_data_valid),
+    .rd_data_end(ddr_rd_data_end),
+    .sr_req(1'b0),
+    .ref_req(1'b0),
+    .sr_ack(),
+    .ref_ack(),
+    .burst(1'b0),
+    .O_ddr_addr(ddr_addr),
+    .O_ddr_ba(ddr_bank),
+    .O_ddr_cs_n(ddr_cs),
+    .O_ddr_ras_n(ddr_ras),
+    .O_ddr_cas_n(ddr_cas),
+    .O_ddr_we_n(ddr_we),
+    .O_ddr_clk(ddr_ck),
+    .O_ddr_clk_n(ddr_ck_n),
+    .O_ddr_cke(ddr_cke),
+    .O_ddr_odt(ddr_odt),
+    .O_ddr_reset_n(ddr_reset_n),
+    .O_ddr_dqm(ddr_dm),
+    .IO_ddr_dq(ddr_dq),
+    .IO_ddr_dqs(ddr_dqs),
+    .IO_ddr_dqs_n(ddr_dqs_n)
+);
+
+// ==============================================================================
+// 3. UART CONTROLLER
+// ==============================================================================
+wire uart_write_done;
+
+// key_catcher.py'den gelen klavye verisi (UART RX)
+wire       uart_key_ready;   // 1-saat pulse: yeni byte geldi
+wire [7:0] uart_key_data;    // gelen byte değeri
+
+UART_Controller #(
+    .BAUD_RATE(1000000),
+    .CLOCK_FREQ(100000000)
+) debug_uart (
+    .sys_clk(ddr_user_clk),
+    .sys_rst_n(sys_rst_n),
+    .write_enable(uart_wr_en),
+    .data_to_send(uart_data),
+    .RX(RX),
+    .TX(TX),
+    .write_done(uart_write_done),
+    .read_done(uart_key_ready),   // ← artık bağlı!
+    .data_readed(uart_key_data)   // ← artık bağlı!
+);
+
+// ==============================================================================
+// 4. SPI CONTROLLER
+// ==============================================================================
+reg spi_read_enable = 0;
+reg [7:0] spi_cmd = 8'h03;
+reg [23:0] spi_address = 24'h10_00_00;
+reg [7:0] spi_total_bits = 160;
+wire [127:0] spi_128bit_data;
+wire spi_done;
+
+SPI_Controller spi_inst (
+    .sys_clk(ddr_user_clk),
+    .sys_rst_n(sys_rst_n),
+    .MISO(MISO),
+    .read_enable(spi_read_enable),
+    .command(spi_cmd),
+    .address(spi_address),
+    .total_bits(spi_total_bits),
+    .data_readed(spi_128bit_data),
+    .MOSI(MOSI),
+    .CS(SPI_CS),
+    .CLK(SPI_CLK),
+    .done(spi_done)
+);
+
+// ==============================================================================
+// 5. DMA BOOTLOADER STATE MACHINE
+// ==============================================================================
+localparam B_BOOT_DELAY      = 4'd0;
+localparam B_WAIT_CALIB      = 4'd1;
+localparam B_UART_SEND       = 4'd2;
+localparam B_UART_WAIT_DONE  = 4'd3;
+localparam B_SPI_START       = 4'd4;
+localparam B_SPI_WAIT        = 4'd5;
+localparam B_DDR_WAIT        = 4'd6;
+localparam B_DDR_WRITE       = 4'd7;
+localparam B_CS_HOLD         = 4'd8;
+localparam B_CHECK_PROGRESS  = 4'd9;
+localparam B_HALT            = 4'd10;
+
+reg [3:0]  b_state = B_BOOT_DELAY;
+reg [3:0]  b_return_state = B_BOOT_DELAY;
+reg [24:0] timer = 0;
+reg [1:0]  boot_byte_idx = 0;
+reg [31:0] boot_uart_msg = 0;
+reg [17:0] progress_counter = 0;
+
+reg [2:0]   boot_ddr_cmd = 0;
+reg         boot_ddr_cmd_en = 0;
+reg [26:0]  boot_user_addr = 0;
+reg [127:0] boot_ddr_wr_data = 0;
+reg         boot_ddr_wr_data_en = 0;
+reg         boot_ddr_wr_data_end = 0;
+reg [7:0]   boot_uart_data = 0;
+reg         boot_uart_wr_en = 0;
+
+wire [15:0] boot_ddr_wr_data_mask = 16'h0000;
+
+always @(posedge ddr_user_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        b_state <= B_BOOT_DELAY;
+        spi_read_enable <= 0;
+        boot_uart_wr_en <= 0;
+        spi_address <= 24'h10_00_00;
+        boot_user_addr <= 27'd0;
+        boot_ddr_cmd_en <= 0;
+        boot_ddr_wr_data_en <= 0;
+        boot_ddr_wr_data_end <= 0;
+        timer <= 0;
+        boot_byte_idx <= 0;
+        progress_counter <= 0;
+        boot_done <= 0;
+    end else if (!boot_done) begin
+        case (b_state)
+            B_BOOT_DELAY: begin
+                if (timer >= 1_000_000) begin
+                    timer <= 0;
+                    boot_uart_msg <= 32'hDE_AD_BE_EF;
+                    b_return_state <= B_WAIT_CALIB;
+                    b_state <= B_UART_SEND;
+                end else begin
+                    timer <= timer + 25'd1;
+                end
+            end
+
+            B_WAIT_CALIB: begin
+                if (ddr_calib_complete) begin
+                    boot_uart_msg <= 32'h44_44_52_33;
+                    b_return_state <= B_SPI_START;
+                    b_state <= B_UART_SEND;
+                end
+            end
+
+            B_UART_SEND: begin
+                case (boot_byte_idx)
+                    2'd0: boot_uart_data <= boot_uart_msg[31:24];
+                    2'd1: boot_uart_data <= boot_uart_msg[23:16];
+                    2'd2: boot_uart_data <= boot_uart_msg[15:8];
+                    2'd3: boot_uart_data <= boot_uart_msg[7:0];
+                endcase
+                boot_uart_wr_en <= 1;
+                b_state <= B_UART_WAIT_DONE;
+            end
+
+            B_UART_WAIT_DONE: begin
+                if (uart_write_done) begin
+                    boot_uart_wr_en <= 0;
+                    if (boot_byte_idx == 3) begin
+                        boot_byte_idx <= 0;
+                        b_state <= b_return_state;
+                    end else begin
+                        boot_byte_idx <= boot_byte_idx + 2'd1;
+                        b_state <= B_UART_SEND;
+                    end
+                end
+            end
+
+            B_SPI_START: begin
+                spi_cmd <= 8'h03;
+                spi_total_bits <= 160;
+                spi_read_enable <= 1;
+                b_state <= B_SPI_WAIT;
+            end
+
+            B_SPI_WAIT: begin
+                if (spi_done) begin
+                    spi_read_enable <= 0;
+                    b_state <= B_DDR_WAIT;
+                end
+            end
+
+            B_DDR_WAIT: begin
+                if (ddr_cmd_ready && ddr_wr_data_rdy) begin
+                    boot_ddr_cmd <= 3'b000;
+                    boot_ddr_cmd_en <= 1;
+                    boot_ddr_wr_data <= spi_128bit_data;
+                    boot_ddr_wr_data_en <= 1;
+                    boot_ddr_wr_data_end <= 1;
+                    b_state <= B_DDR_WRITE;
+                end
+            end
+
+            B_DDR_WRITE: begin
+                boot_ddr_cmd_en <= 0;
+                boot_ddr_wr_data_en <= 0;
+                boot_ddr_wr_data_end <= 0;
+                spi_address <= spi_address + 24'd16;
+                boot_user_addr <= boot_user_addr + 27'd8;
+                progress_counter <= progress_counter + 18'd16;
+                timer <= 0;
+                b_state <= B_CS_HOLD;
+            end
+
+            B_CS_HOLD: begin
+                if (timer >= 50) begin
+                    b_state <= B_CHECK_PROGRESS;
+                end else begin
+                    timer <= timer + 25'd1;
+                end
+            end
+
+            B_CHECK_PROGRESS: begin
+                if (spi_address >= 24'h80_00_00) begin
+                    boot_uart_msg <= 32'h44_4F_4E_45;
+                    b_return_state <= B_HALT;
+                    b_state <= B_UART_SEND;
+                end
+                else if (progress_counter >= 102400) begin
+                    progress_counter <= 0;
+                    boot_uart_msg <= 32'h2B_2B_2B_2B;
+                    b_return_state <= B_SPI_START;
+                    b_state <= B_UART_SEND;
+                end
+                else begin
+                    b_state <= B_SPI_START;
+                end
+            end
+
+            B_HALT: begin
+                boot_done <= 1;
+                b_state <= B_HALT;
+            end
+
+            default: b_state <= B_BOOT_DELAY;
+        endcase
+    end
+    // --- CTRL+ESC SOFT REBOOT TRIGGER FOR BOOTLOADER ---
+    else if (cpu_done && ps2_data[4] && ps2_data[7]) begin
+        b_state <= B_BOOT_DELAY;
+        spi_read_enable <= 0;
+        boot_uart_wr_en <= 0;
+        spi_address <= 24'h10_00_00;
+        boot_user_addr <= 27'd0;
+        boot_ddr_cmd_en <= 0;
+        boot_ddr_wr_data_en <= 0;
+        boot_ddr_wr_data_end <= 0;
+        timer <= 0;
+        boot_byte_idx <= 0;
+        progress_counter <= 0;
+        boot_done <= 0;
+    end
+end
+
+// ==============================================================================
+// Keyboard Controller (PS/2)
+// ==============================================================================
+PS2_Controller keyboard (
+    .sys_clk(ddr_user_clk),
+    .sys_rst_n(sys_rst_n),
+    .PS2_D_I(PS2_DATA_I),
+    .PS2_CLK_I(PS2_CLK_I),
+    .uart_key_ready(uart_key_ready),  // PC klavyesi: key_catcher.py → UART
+    .uart_key_data(uart_key_data),    // PC klavyesi: gelen byte
+    .DOOM_KEYS(ps2_data),
+    .KEY_EVENT(ps2_key_event),
+    .KEY_EV_VALID(ps2_key_ev_valid)
+);
+
+// ==============================================================================
+// HDMI Controller (replaces VGA)
+// ==============================================================================
+
+// Clock generation: Gowin_rPLL_VGA -> 126 MHz serial clock, CLKDIV/5 -> 25.2 MHz pixel clock
+wire hdmi_serial_clk;
+wire vga_clk;
+wire vga_lock;
+
+Gowin_rPLL_VGA u_Gowin_rPLL_VGA (
+    .clkin(sys_clk),
+    .lock(vga_lock),
+    .reset(~sys_rst_n),
+    .clkout(hdmi_serial_clk)
+);
+
+CLKDIV u_clkdiv5 (
+    .HCLKIN (hdmi_serial_clk),
+    .CLKOUT (vga_clk),
+    .RESETN (sys_rst_n),
+    .CALIB  (1'b1)
+);
+defparam u_clkdiv5.DIV_MODE = "5";
+defparam u_clkdiv5.GSREN    = "false";
+
+wire hdmi_rst_n = sys_rst_n & vga_lock;
+
+wire [13:0] vga_read_addr;
+wire        vga_read_en;
+wire [31:0] active_display_data;
+wire        hdmi_vsync;
+
+// 2-stage CDC: hdmi_vsync (vga_clk domain) → ddr_user_clk domain
+// Prevents metastability when the CPU polls 0x40400000 for vsync
+reg hdmi_vsync_d1 = 1, hdmi_vsync_d2 = 1;
+always @(posedge ddr_user_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        hdmi_vsync_d1 <= 1;
+        hdmi_vsync_d2 <= 1;
+    end else begin
+        hdmi_vsync_d1 <= hdmi_vsync;
+        hdmi_vsync_d2 <= hdmi_vsync_d1;
+    end
+end
+
+HDMI_Top u_hdmi (
+    .pix_clk       (vga_clk),
+    .tmds_clk      (hdmi_serial_clk),
+    .sys_rst_n     (hdmi_rst_n),
+    .vram_read_addr(vga_read_addr),
+    .vram_read_en  (vga_read_en),
+    .vram_read_data(active_display_data),
+    .vsync_out     (hdmi_vsync),
+    .tmds_clk_p    (tmds_clk_p),
+    .tmds_clk_n    (tmds_clk_n),
+    .tmds_data_p   (tmds_data_p),
+    .tmds_data_n   (tmds_data_n)
+);
+
+// ==============================================================================
+// VRAM (Main Display) & CRASH MULTIPLEXER (Algorithmic BSOD)
+// ==============================================================================
+
+reg [13:0]  vram_addr_out = 0;
+reg [31:0]  vram_data_out = 0;
+reg         vram_write_en = 0;
+
+wire [31:0] main_vram_read_data;
+
+// --- 1. The Main VRAM (Active during normal gameplay) ---
+Gowin_SDPB_VRAM vram(
+    .clka(ddr_user_clk),
+    .cea(vram_write_en),
+    .reseta(~sys_rst_n),
+    .ada(vram_addr_out),
+    .din(vram_data_out),
+
+    .clkb(vga_clk),
+    .ceb(vga_read_en),
+    .resetb(~sys_rst_n),
+    .oce(1'b0),
+    .adb(vga_read_addr),
+    .dout(main_vram_read_data)
+);
+
+// --- 2. Zero-RAM Algorithmic Blue Screen MUX ---
+// If CPU halts, override the VRAM data and output Pure Blue (0x03030303)
+assign active_display_data = cpu_done ? 32'h03_03_03_03 : main_vram_read_data;
+
+
+// ==============================================================================
+// SYSTEM HARDWARE TIMER (1ms resolution)
+// ==============================================================================
+reg [31:0] ms_counter = 0;
+reg [16:0] tick_counter = 0;
+
+always @(posedge ddr_user_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        ms_counter <= 32'd0;
+        tick_counter <= 17'd0;
+    end else if (boot_done && !cpu_done) begin
+        if (tick_counter >= 17'd99_999) begin
+            tick_counter <= 17'd0;
+            ms_counter <= ms_counter + 1;
+        end else begin
+            tick_counter <= tick_counter + 17'd1;
+        end
+    end
+    // --- CTRL+ESC SOFT REBOOT TRIGGER FOR TIMER ---
+    else if (cpu_done && ps2_data[4] && ps2_data[7]) begin
+        ms_counter <= 32'd0;
+        tick_counter <= 17'd0;
+    end
+end
+
+// ==============================================================================
+// 6. CPU REGISTERS
+// ==============================================================================
+reg [4:0] read1_addr = 0;
+wire [31:0] read1_data;
+
+reg [4:0] read2_addr = 0;
+wire [31:0] read2_data;
+
+reg [4:0] write_addr = 0;
+reg [31:0] write_data = 0;
+reg [31:0] read1_data_reg = 0;
+reg [31:0] read2_data_reg = 0;
+// --- Pre-computed flags (registered in C_REG_FETCH_WAIT to break critical paths) ---
+reg         rs2_is_zero   = 0;  // read2_data == 0 (division by zero)
+reg         branch_eq     = 0;  // rs1 == rs2
+reg         branch_lt     = 0;  // $signed(rs1) < $signed(rs2)
+reg         branch_ltu    = 0;  // rs1 < rs2 (unsigned)
+reg write_enable = 0;
+
+CPU_Registers cpu_register_controller(
+    .clk(ddr_user_clk),
+    .read1_addr(read1_addr),
+    .read1_data(read1_data),
+    .read2_addr(read2_addr),
+    .read2_data(read2_data),
+    .write_addr(write_addr),
+    .write_data(write_data),
+    .write_enable(write_enable)
+);
+
+// ==============================================================================
+// 7. COMPUTER STATE MACHINE (Now 6-bit for Prefetch States)
+// ==============================================================================
+localparam C_UART_SEND         = 6'd0;
+localparam C_UART_WAIT_DONE    = 6'd1;
+localparam C_DDR_WAIT_READ     = 6'd2;
+localparam C_DDR_READ          = 6'd3;
+localparam C_DDR_WAIT_DATA     = 6'd4;
+localparam C_LOAD_INSTR        = 6'd5;
+localparam C_DECODE            = 6'd6;
+
+localparam C_EXEC_R_TYPE       = 6'd7;
+localparam C_EXEC_I_TYPE       = 6'd8;
+localparam C_EXEC_LOAD         = 6'd9;
+localparam C_EXEC_STORE        = 6'd10;
+localparam C_EXEC_BRANCH       = 6'd11;
+localparam C_EXEC_JAL          = 6'd12;
+localparam C_EXEC_JALR         = 6'd13;
+localparam C_EXEC_LUI          = 6'd14;
+localparam C_EXEC_AUIPC        = 6'd15;
+
+localparam C_EXECUTE           = 6'd16;
+localparam C_FINISH_DATA_READ  = 6'd17;
+localparam C_DDR_WAIT_WRITE    = 6'd18;
+localparam C_DDR_WRITE         = 6'd19;
+localparam C_IO_READ           = 6'd20;
+localparam C_IO_WRITE          = 6'd21;
+
+localparam C_HALT              = 6'd22;
+localparam C_HALT_SETUP        = 6'd23;
+localparam C_HALT_FETCH        = 6'd24;
+localparam C_HALT_NEXT         = 6'd25;
+localparam C_HALT_FOREVER      = 6'd26;
+
+localparam C_DEBUG_PRINT_PC    = 6'd27;
+localparam C_DEBUG_PRINT_INSTR = 6'd28;
+
+localparam C_CHECK_ILLEGAL_R   = 6'd29;
+localparam C_REG_FETCH_WAIT    = 6'd30;
+
+// --- NEW PREFETCH STATES ---
+localparam C_PREFETCH_ISSUE    = 6'd31;
+localparam C_PREFETCH_CLEANUP  = 6'd32;
+
+// --- RV32M Extension States ---
+localparam C_EXEC_MUL          = 6'd33; // MUL / MULH / MULHU / MULHSU (1 cycle, DSP)
+localparam C_DIV_SETUP         = 6'd34; // DIV / DIVU / REM / REMU setup
+localparam C_DIV_EXEC          = 6'd35; // 33-cycle iterative divider
+localparam C_DIV_FINISH        = 6'd36; // write result
+
+// --- Instruction Cache State ---
+localparam C_ICACHE_WAIT       = 6'd37; // 1-cycle BSRAM read latency
+localparam C_DCACHE_WAIT       = 6'd38; // 1-cycle BSRAM read latency
+
+reg [5:0]  state = C_DDR_WAIT_READ;
+reg [5:0]  return_state = C_DDR_WAIT_READ;
+reg [5:0]  pending_exec_state = 0;
+
+// CPU Private Wires
+reg [2:0]   cpu_ddr_cmd = 0;
+reg         cpu_ddr_cmd_en = 0;
+reg [26:0]  cpu_user_addr = 0;
+reg [127:0] cpu_ddr_wr_data = 0;
+reg         cpu_ddr_wr_data_en = 0;
+reg         cpu_ddr_wr_data_end = 0;
+reg [15:0]  cpu_ddr_wr_data_mask = 16'h0000;
+reg [7:0]   cpu_uart_data = 0;
+reg         cpu_uart_wr_en = 0;
+reg [1:0]   cpu_byte_idx = 0;
+reg [31:0]  cpu_uart_msg = 0;
+
+// Sub-Word Memory Alignment Wires
+reg [31:0]  raw_word = 0;
+reg [3:0]   base_mask = 0;
+reg [31:0]  active_payload = 0;
+
+// program_counter: yukarıda ICache'den önce tanımlandı (satır ~109)
+reg [127:0] memory_read_reg = 0; // Now only used for Data Loads
+reg [31:0]  first_instr = 0;
+reg [31:0]  second_instr = 0;
+reg [31:0]  third_instr = 0;
+reg [31:0]  fourth_instr = 0;
+
+// --- DDR3 TRANSACTION QUEUE & BACKGROUND CATCHER ---
+reg [1:0]  rq_head = 0;
+reg [1:0]  rq_tail = 0;
+reg [3:0]  rq_is_data = 0; // 1 = Data Load, 0 = Instruction/Prefetch
+reg [26:0] rq_addr_0=0, rq_addr_1=0, rq_addr_2=0, rq_addr_3=0;
+
+reg [127:0] pf_read_reg = 0;
+reg [26:0]  pf_ready_addr = 27'h7FFFFFF; // Initializes to invalid address
+reg         pf_valid = 0;
+
+reg [127:0] dmem_read_reg = 0;
+reg         dmem_valid = 0;
+// ----------------------------------------------------
+
+// --- RV32M Divider Registers ---
+// 64-bit working register: [63:32] = partial remainder, [31:0] = dividend/quotient shift reg
+reg [63:0]  div_working    = 0;
+reg [31:0]  div_divisor_r  = 0;  // absolute value of divisor
+reg [5:0]   div_bit        = 0;  // iteration counter 0..31
+reg         div_is_signed  = 0;
+reg         div_is_rem     = 0;
+reg         div_neg_result = 0;  // quotient needs negation
+reg         div_neg_rem    = 0;  // remainder needs negation
+// 64-bit multiplier accumulator (DSP blocks)
+reg [63:0]  mul_result_r   = 0;
+
+// --- Divider combinational step wires (restoring algorithm) ---
+// Each cycle: shift PR left by 1, bring in MSB of dividend (div_working[31])
+wire [32:0] div_pr_shifted = {div_working[62:32], div_working[31]};
+wire [32:0] div_pr_sub     = div_pr_shifted - {1'b0, div_divisor_r};
+wire        div_pr_lt_d    = !div_pr_sub[32]; // 1 = subtract succeeded
+
+// Internal CPU decoding wires
+reg [31:0]  current_instr = 0;
+reg [6:0]   opcode = 0;
+reg [2:0]   funct3 = 0;
+reg [6:0]   funct7 = 0;
+
+wire [31:0] imm_i = {{20{current_instr[31]}}, current_instr[31:20]};
+wire [31:0] imm_s = {{20{current_instr[31]}}, current_instr[31:25], current_instr[11:7]};
+wire [31:0] imm_b = {{20{current_instr[31]}}, current_instr[7], current_instr[30:25], current_instr[11:8], 1'b0};
+wire [31:0] imm_j = {{12{current_instr[31]}}, current_instr[19:12], current_instr[20], current_instr[30:21], 1'b0};
+wire [31:0] imm_u = {current_instr[31:12], 12'b0};
+
+reg         is_instruction_fetch = 1;
+reg [31:0]  data_addr = 0;
+reg [31:0]  cpu_store_data = 0;
+
+reg [4:0]   dump_reg_idx = 0;
+
+wire        dcache_hit;
+wire [31:0] dcache_data;
+wire        dcache_valid;
+reg         dcache_fill_en   = 0;
+reg [31:0]  dcache_fill_addr = 0;
+reg [127:0] dcache_fill_data = 0;
+reg         dcache_req       = 0;
+reg         dcache_inv_en    = 0;
+reg [31:0]  dcache_inv_addr  = 0;
+
+DCache dcache_inst (
+    .clk       (ddr_user_clk),
+    .rst_n     (sys_rst_n),
+    .cpu_addr  (data_addr),
+    .cpu_req   (dcache_req),
+    .cpu_data  (dcache_data),
+    .cpu_valid (dcache_valid),
+    .cache_hit (dcache_hit),
+    .fill_addr (dcache_fill_addr),
+    .fill_data (dcache_fill_data),
+    .fill_en   (dcache_fill_en),
+    .inv_addr  (dcache_inv_addr),
+    .inv_en    (dcache_inv_en)
+);
+
+always @(posedge ddr_user_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        state <= C_DDR_WAIT_READ;
+        cpu_ddr_cmd_en <= 0;
+        cpu_ddr_wr_data_en <= 0;
+        cpu_ddr_wr_data_end <= 0;
+        cpu_ddr_wr_data_mask <= 16'h0000;
+        cpu_uart_wr_en <= 0;
+        cpu_user_addr <= 27'd0;
+        program_counter <= 32'd0;
+        memory_read_reg <= 0;
+        cpu_byte_idx <= 0;
+        cpu_done <= 0;
+        is_instruction_fetch <= 1;
+        data_addr <= 32'd0;
+        cpu_store_data <= 32'd0;
+        vram_write_en <= 0;
+        dump_reg_idx <= 5'd0;
+        pending_exec_state <= 0;
+
+        // Reset Queue
+        rq_head <= 0; rq_tail <= 0; rq_is_data <= 0;
+        pf_valid <= 0; dmem_valid <= 0; pf_ready_addr <= 27'h7FFFFFF;
+
+    end else if (boot_done && !cpu_done) begin
+
+        // ========================================================
+        // GLOBAL SNOOPING QUEUE (Background Data Catcher)
+        // ========================================================
+        if (ddr_rd_data_valid) begin
+            if (rq_is_data[rq_tail]) begin
+                // It was a Data Load Request
+                dmem_read_reg <= ddr_rd_data;
+                dmem_valid    <= 1;
+                
+                // ─── DCache doldur ───────────────────────────────────────
+                dcache_fill_en   <= 1;
+                dcache_fill_addr <= (rq_tail == 2'd0) ? {rq_addr_0, 4'b0} :
+                                    (rq_tail == 2'd1) ? {rq_addr_1, 4'b0} :
+                                    (rq_tail == 2'd2) ? {rq_addr_2, 4'b0} :
+                                                        {rq_addr_3, 4'b0};
+                dcache_fill_data <= ddr_rd_data;
+                // ─────────────────────────────────────────────────────────
+            end else begin
+                // It was an Instruction Prefetch Request
+                pf_read_reg   <= ddr_rd_data;
+                pf_valid      <= 1;
+                // Save the exact address this block belongs to
+                if (rq_tail == 2'd0) pf_ready_addr <= rq_addr_0;
+                else if (rq_tail == 2'd1) pf_ready_addr <= rq_addr_1;
+                else if (rq_tail == 2'd2) pf_ready_addr <= rq_addr_2;
+                else pf_ready_addr <= rq_addr_3;
+
+                // ─── ICache doldur ───────────────────────────────────────
+                icache_fill_en   <= 1;
+                icache_fill_addr <= (rq_tail == 2'd0) ? {rq_addr_0, 4'b0} :
+                                    (rq_tail == 2'd1) ? {rq_addr_1, 4'b0} :
+                                    (rq_tail == 2'd2) ? {rq_addr_2, 4'b0} :
+                                                        {rq_addr_3, 4'b0};
+                icache_fill_data <= ddr_rd_data;
+                // ─────────────────────────────────────────────────────────
+            end
+            rq_tail <= rq_tail + 2'd1; // Advance the FIFO
+        end else begin
+            icache_fill_en <= 0; // pulse genişliği sadece 1 saat
+            dcache_fill_en <= 0;
+        end
+        // ========================================================
+
+        case (state)
+            C_UART_SEND: begin
+                case (cpu_byte_idx)
+                    2'd0: cpu_uart_data <= cpu_uart_msg[31:24];
+                    2'd1: cpu_uart_data <= cpu_uart_msg[23:16];
+                    2'd2: cpu_uart_data <= cpu_uart_msg[15:8];
+                    2'd3: cpu_uart_data <= cpu_uart_msg[7:0];
+                endcase
+                cpu_uart_wr_en <= 1;
+                state <= C_UART_WAIT_DONE;
+            end
+
+            C_UART_WAIT_DONE: begin
+                if (uart_write_done) begin
+                    cpu_uart_wr_en <= 0;
+                    if (cpu_byte_idx == 3) begin
+                        cpu_byte_idx <= 0;
+                        state <= return_state;
+                    end else begin
+                        cpu_byte_idx <= cpu_byte_idx + 2'd1;
+                        state <= C_UART_SEND;
+                    end
+                end
+            end
+
+            C_DDR_WAIT_READ: begin
+                write_enable  <= 0;
+
+                if (is_instruction_fetch == 0 && data_addr >= 32'h40000000) begin
+                    icache_req <= 0;
+                    dcache_req <= 0;
+                    state <= C_IO_READ;
+                end
+                else if (is_instruction_fetch == 1'b1) begin
+                    icache_req <= 1;
+                    dcache_req <= 0;
+                    state <= C_ICACHE_WAIT; // Pipeline ICache
+                end
+                else begin
+                    icache_req <= 0;
+                    dcache_req <= 1;
+                    state <= C_DCACHE_WAIT; // Pipeline DCache
+                end
+            end
+
+            C_DDR_READ: begin
+                cpu_ddr_cmd_en <= 0;
+                state <= C_DDR_WAIT_DATA;
+            end
+
+            C_DDR_WAIT_DATA: begin
+                // We wait for the Global Catcher to flag that data arrived
+                if (is_instruction_fetch) begin
+                    if (pf_valid) begin
+                        // Check if it's the data we actually want (Protects against stray branch prefetches)
+                        if (pf_ready_addr == {program_counter[27:4], 3'b000}) begin
+                            pf_valid <= 0;
+                            first_instr  <= {pf_read_reg[103:96], pf_read_reg[111:104], pf_read_reg[119:112], pf_read_reg[127:120]};
+                            second_instr <= {pf_read_reg[71:64],  pf_read_reg[79:72],   pf_read_reg[87:80],   pf_read_reg[95:88]};
+                            third_instr  <= {pf_read_reg[39:32],  pf_read_reg[47:40],   pf_read_reg[55:48],   pf_read_reg[63:56]};
+                            fourth_instr <= {pf_read_reg[7:0],    pf_read_reg[15:8],    pf_read_reg[23:16],   pf_read_reg[31:24]};
+                            state <= C_LOAD_INSTR;
+                        end else begin
+                            pf_valid <= 0; // Throw away stale branch prefetch
+                        end
+                    end
+                end else begin
+                    // It was a Data Load
+                    if (dmem_valid) begin
+                        dmem_valid <= 0;
+                        memory_read_reg <= dmem_read_reg;
+                        state <= C_FINISH_DATA_READ;
+                    end
+                end
+            end
+
+            C_LOAD_INSTR: begin
+                write_enable <= 0;
+                case (program_counter[3:2])
+                    2'b00: current_instr <= first_instr;
+                    2'b01: current_instr <= second_instr;
+                    2'b10: current_instr <= third_instr;
+                    2'b11: current_instr <= fourth_instr;
+                endcase
+                state <= C_DECODE;
+            end
+
+            // ICache hit: BSRAM 1 saat okuma gecikmesi bekleniyor
+            C_ICACHE_WAIT: begin
+                write_enable <= 0;
+                icache_req   <= 0;
+                if (icache_valid) begin
+                    current_instr <= icache_data;
+                    state         <= C_DECODE;
+                end
+                else if (pf_valid && pf_ready_addr == {program_counter[27:4], 3'b000}) begin
+                    pf_valid    <= 0;
+                    first_instr  <= {pf_read_reg[103:96], pf_read_reg[111:104], pf_read_reg[119:112], pf_read_reg[127:120]};
+                    second_instr <= {pf_read_reg[71:64],  pf_read_reg[79:72],   pf_read_reg[87:80],   pf_read_reg[95:88]};
+                    third_instr  <= {pf_read_reg[39:32],  pf_read_reg[47:40],   pf_read_reg[55:48],   pf_read_reg[63:56]};
+                    fourth_instr <= {pf_read_reg[7:0],    pf_read_reg[15:8],    pf_read_reg[23:16],   pf_read_reg[31:24]};
+                    state <= C_LOAD_INSTR;
+                end
+                else if (ddr_cmd_ready) begin
+                    cpu_ddr_cmd      <= 3'b001;
+                    cpu_ddr_cmd_en   <= 1;
+                    cpu_user_addr    <= {program_counter[27:4], 3'b000};
+                    rq_is_data[rq_head] <= 0;
+                    case (rq_head)
+                        2'd0: rq_addr_0 <= {program_counter[27:4], 3'b000};
+                        2'd1: rq_addr_1 <= {program_counter[27:4], 3'b000};
+                        2'd2: rq_addr_2 <= {program_counter[27:4], 3'b000};
+                        2'd3: rq_addr_3 <= {program_counter[27:4], 3'b000};
+                    endcase
+                    rq_head <= rq_head + 2'd1;
+                    state   <= C_DDR_READ;
+                end
+            end
+
+            // DCache hit: 1 saat gecikme
+            C_DCACHE_WAIT: begin
+                write_enable <= 0;
+                dcache_req   <= 0;
+                if (dcache_valid) begin
+                    raw_word = dcache_data;
+                    case (funct3)
+                        3'b000:
+                            case (data_addr[1:0])
+                                2'b00: write_data <= {{24{raw_word[7]}},  raw_word[7:0]};
+                                2'b01: write_data <= {{24{raw_word[15]}}, raw_word[15:8]};
+                                2'b10: write_data <= {{24{raw_word[23]}}, raw_word[23:16]};
+                                2'b11: write_data <= {{24{raw_word[31]}}, raw_word[31:24]};
+                            endcase
+                        3'b100:
+                            case (data_addr[1:0])
+                                2'b00: write_data <= {24'd0, raw_word[7:0]};
+                                2'b01: write_data <= {24'd0, raw_word[15:8]};
+                                2'b10: write_data <= {24'd0, raw_word[23:16]};
+                                2'b11: write_data <= {24'd0, raw_word[31:24]};
+                            endcase
+                        3'b001:
+                            if (data_addr[1] == 1'b0) write_data <= {{16{raw_word[15]}}, raw_word[15:0]};
+                            else                      write_data <= {{16{raw_word[31]}}, raw_word[31:16]};
+                        3'b101:
+                            if (data_addr[1] == 1'b0) write_data <= {16'd0, raw_word[15:0]};
+                            else                      write_data <= {16'd0, raw_word[31:16]};
+                        3'b010:
+                            write_data <= raw_word;
+                        default:
+                            write_data <= raw_word;
+                    endcase
+                    write_enable <= 1;
+                    state <= return_state;
+                end
+                else if (ddr_cmd_ready) begin
+                    cpu_ddr_cmd    <= 3'b001;
+                    cpu_ddr_cmd_en <= 1;
+                    cpu_user_addr  <= {data_addr[27:4], 3'b000};
+                    rq_is_data[rq_head] <= 1;
+                    case (rq_head)
+                        2'd0: rq_addr_0 <= {data_addr[27:4], 3'b000};
+                        2'd1: rq_addr_1 <= {data_addr[27:4], 3'b000};
+                        2'd2: rq_addr_2 <= {data_addr[27:4], 3'b000};
+                        2'd3: rq_addr_3 <= {data_addr[27:4], 3'b000};
+                    endcase
+                    rq_head <= rq_head + 2'd1;
+                    state   <= C_DDR_READ;
+                end
+            end
+
+            C_DEBUG_PRINT_PC: begin
+                cpu_uart_msg <= program_counter;
+                cpu_byte_idx <= 0;
+                return_state <= C_DEBUG_PRINT_INSTR;
+                state <= C_UART_SEND;
+            end
+
+            C_DEBUG_PRINT_INSTR: begin
+                cpu_uart_msg <= current_instr;
+                cpu_byte_idx <= 0;
+                return_state <= C_DECODE;
+                state <= C_UART_SEND;
+            end
+
+            C_DECODE: begin
+                opcode <= current_instr[6:0];
+                funct3 <= current_instr[14:12];
+                funct7 <= current_instr[31:25];
+
+                read1_addr <= current_instr[19:15];
+                read2_addr <= current_instr[24:20];
+                write_addr <= current_instr[11:7];
+
+                is_instruction_fetch <= 0;
+                return_state <= C_EXECUTE;
+
+                case (current_instr[6:0])
+                    7'b0110011: begin pending_exec_state <= C_CHECK_ILLEGAL_R; state <= C_REG_FETCH_WAIT; end
+
+                    7'b0010011: begin pending_exec_state <= C_EXEC_I_TYPE; state <= C_REG_FETCH_WAIT; end
+                    7'b0000011: begin pending_exec_state <= C_EXEC_LOAD;   state <= C_REG_FETCH_WAIT; end
+                    7'b0100011: begin pending_exec_state <= C_EXEC_STORE;  state <= C_REG_FETCH_WAIT; end
+                    7'b1100011: begin pending_exec_state <= C_EXEC_BRANCH; state <= C_REG_FETCH_WAIT; end
+                    7'b1100111: begin pending_exec_state <= C_EXEC_JALR;   state <= C_REG_FETCH_WAIT; end
+
+                    7'b1101111: state <= C_EXEC_JAL;
+                    7'b0110111: state <= C_EXEC_LUI;
+                    7'b0010111: state <= C_EXEC_AUIPC;
+
+                    7'b0001111: state <= C_EXECUTE;
+                    7'b1110011: state <= C_EXECUTE;
+
+                    default:    state <= C_HALT;
+                endcase
+            end
+
+            C_CHECK_ILLEGAL_R: begin
+                if (funct7 == 7'b0000001) begin
+                    // RV32M: MUL needs reg values, route through fetch wait
+                    case (funct3)
+                        3'b000,
+                        3'b001,
+                        3'b010,
+                        3'b011: begin
+                            // MUL variants — registers already loaded (C_REG_FETCH_WAIT ran)
+                            state <= C_EXEC_MUL;
+                        end
+                        default: begin
+                            // DIV/REM variants
+                            state <= C_DIV_SETUP;
+                        end
+                    endcase
+                end else begin
+                    state <= C_EXEC_R_TYPE;
+                end
+            end
+
+            C_REG_FETCH_WAIT: begin
+                read1_data_reg <= read1_data;
+                read2_data_reg <= read2_data;
+                // Pre-compute comparison flags to cut critical paths
+                rs2_is_zero  <= (read2_data == 32'd0);
+                branch_eq    <= (read1_data == read2_data);
+                branch_lt    <= ($signed(read1_data) < $signed(read2_data));
+                branch_ltu   <= (read1_data < read2_data);
+                state <= pending_exec_state;
+            end
+
+            // ========================================================
+            // RV32M — MULTIPLICATION  (1 cycle, uses Gowin DSP48 blocks)
+            // ========================================================
+            C_EXEC_MUL: begin
+                write_enable <= 1;
+                case (funct3)
+                    3'b000: begin // MUL — lower 32 bits of rs1 * rs2
+                        mul_result_r <= $signed({{32{read1_data_reg[31]}}, read1_data_reg}) *
+                                        $signed({{32{read2_data_reg[31]}}, read2_data_reg});
+                        write_data <= (read1_data_reg * read2_data_reg); // synth uses DSP
+                    end
+                    3'b001: begin // MULH — upper 32 bits, signed × signed
+                        mul_result_r <= $signed({{32{read1_data_reg[31]}}, read1_data_reg}) *
+                                        $signed({{32{read2_data_reg[31]}}, read2_data_reg});
+                        write_data <= ($signed({{32{read1_data_reg[31]}}, read1_data_reg}) *
+                                       $signed({{32{read2_data_reg[31]}}, read2_data_reg})) >> 32;
+                    end
+                    3'b010: begin // MULHSU — upper 32 bits, signed × unsigned
+                        mul_result_r <= $signed({{32{read1_data_reg[31]}}, read1_data_reg}) *
+                                        {32'd0, read2_data_reg};
+                        write_data <= ($signed({{32{read1_data_reg[31]}}, read1_data_reg}) *
+                                       {32'd0, read2_data_reg}) >> 32;
+                    end
+                    3'b011: begin // MULHU — upper 32 bits, unsigned × unsigned
+                        mul_result_r <= {32'd0, read1_data_reg} * {32'd0, read2_data_reg};
+                        write_data <= ({32'd0, read1_data_reg} * {32'd0, read2_data_reg}) >> 32;
+                    end
+                    default: write_data <= 32'd0;
+                endcase
+                state <= return_state;
+            end
+
+            // ========================================================
+            // RV32M — DIVISION / REMAINDER  (DISABLED — returns spec stub)
+            // DIV/DIVU  → 0xFFFFFFFF  (all-ones, same as divide-by-zero)
+            // REM/REMU  → 0x00000000
+            // Result is written in 1 clock; no iterative loop.
+            // ========================================================
+            C_DIV_SETUP: begin
+                write_enable <= 1;
+                // funct3[1] = 1 for REM/REMU, 0 for DIV/DIVU
+                write_data   <= funct3[1] ? 32'h0000_0000 : 32'hFFFF_FFFF;
+                state        <= return_state;
+            end
+
+            // Dead states — should never be reached; go back to fetch cleanly
+            C_DIV_EXEC: begin
+                state <= return_state;
+            end
+
+            C_DIV_FINISH: begin
+                write_enable <= 1;
+                write_data   <= 32'h0000_0000;
+                state        <= return_state;
+            end
+
+            C_EXEC_R_TYPE: begin
+                write_enable <= 1;
+                case (funct3)
+                    3'b000: begin
+                        if (funct7 == 7'b0100000) write_data <= read1_data_reg - read2_data_reg;
+                        else write_data <= read1_data_reg + read2_data_reg;
+                    end
+                    3'b001: write_data <= read1_data_reg << read2_data_reg[4:0];
+                    3'b010: write_data <= ($signed(read1_data_reg) < $signed(read2_data_reg)) ? 32'd1 : 32'd0;
+                    3'b011: write_data <= (read1_data_reg < read2_data_reg) ? 32'd1 : 32'd0;
+                    3'b100: write_data <= read1_data_reg ^ read2_data_reg;
+                    3'b101: begin
+                        if (funct7 == 7'b0100000)
+                            write_data <= $signed(read1_data_reg) >>> read2_data_reg[4:0];
+                        else
+                            write_data <= read1_data_reg >> read2_data_reg[4:0];
+                    end
+                    3'b110: write_data <= read1_data_reg | read2_data_reg;
+                    3'b111: write_data <= read1_data_reg & read2_data_reg;
+                endcase
+                state <= return_state;
+            end
+
+            C_EXEC_I_TYPE: begin
+                write_enable <= 1;
+                case (funct3)
+                    3'b000: write_data <= read1_data_reg + imm_i;
+                    3'b001: write_data <= read1_data_reg << imm_i[4:0];
+                    3'b010: write_data <= ($signed(read1_data_reg) < $signed(imm_i)) ? 32'd1 : 32'd0;
+                    3'b011: write_data <= (read1_data_reg < imm_i) ? 32'd1 : 32'd0;
+                    3'b100: write_data <= read1_data_reg ^ imm_i;
+                    3'b101: begin
+                        if (current_instr[30] == 1'b1)
+                            write_data <= $signed(read1_data_reg) >>> imm_i[4:0];
+                        else
+                            write_data <= read1_data_reg >> imm_i[4:0];
+                    end
+                    3'b110: write_data <= read1_data_reg | imm_i;
+                    3'b111: write_data <= read1_data_reg & imm_i;
+                endcase
+                state <= return_state;
+            end
+
+            C_EXEC_LOAD: begin
+                data_addr <= read1_data_reg + imm_i;
+                is_instruction_fetch <= 0;
+                state <= C_DDR_WAIT_READ;
+            end
+
+            C_EXEC_STORE: begin
+                data_addr <= read1_data_reg + imm_s;
+                cpu_store_data <= read2_data_reg;
+                state <= C_DDR_WAIT_WRITE;
+            end
+
+            C_EXEC_BRANCH: begin
+                state <= return_state;
+                case (funct3)
+                    3'b000: if (branch_eq) begin
+                        program_counter <= program_counter + imm_b;
+                        is_instruction_fetch <= 1;
+                        state <= C_DDR_WAIT_READ;
+                    end
+                    3'b001: if (!branch_eq) begin
+                        program_counter <= program_counter + imm_b;
+                        is_instruction_fetch <= 1;
+                        state <= C_DDR_WAIT_READ;
+                    end
+                    3'b100: if (branch_lt) begin
+                        program_counter <= program_counter + imm_b;
+                        is_instruction_fetch <= 1;
+                        state <= C_DDR_WAIT_READ;
+                    end
+                    3'b101: if (!branch_lt) begin
+                        program_counter <= program_counter + imm_b;
+                        is_instruction_fetch <= 1;
+                        state <= C_DDR_WAIT_READ;
+                    end
+                    3'b110: if (branch_ltu) begin
+                        program_counter <= program_counter + imm_b;
+                        is_instruction_fetch <= 1;
+                        state <= C_DDR_WAIT_READ;
+                    end
+                    3'b111: if (!branch_ltu) begin
+                        program_counter <= program_counter + imm_b;
+                        is_instruction_fetch <= 1;
+                        state <= C_DDR_WAIT_READ;
+                    end
+                endcase
+            end
+
+            C_EXEC_JAL: begin
+                write_data <= program_counter + 32'd4;
+                write_enable <= 1;
+                program_counter <= program_counter + imm_j;
+                is_instruction_fetch <= 1;
+                state <= C_DDR_WAIT_READ;
+            end
+
+            C_EXEC_JALR: begin
+                write_data <= program_counter + 32'd4;
+                write_enable <= 1;
+                program_counter <= (read1_data_reg + imm_i) & 32'hFFFF_FFFE;
+                is_instruction_fetch <= 1;
+                state <= C_DDR_WAIT_READ;
+            end
+
+            C_EXEC_LUI: begin
+                write_data <= imm_u;
+                write_enable <= 1;
+                state <= C_EXECUTE;
+            end
+
+            C_EXEC_AUIPC: begin
+                write_data <= program_counter + imm_u;
+                write_enable <= 1;
+                state <= C_EXECUTE;
+            end
+
+            // ========================================================
+            // I/O OPERATIONS
+            // ========================================================
+            C_IO_READ: begin
+                if (data_addr == 32'h4010_0000) begin
+                    // doomgeneric DG_GetKey: live key-state bitmask
+                    write_data <= ps2_data;
+                end else if (data_addr == 32'h4010_0004) begin
+                    // doomgeneric DG_GetKey: last key event {press[31], doomkey[7:0]}
+                    // C kodu bu adresi KEY_EV_VALID pulse'dan sonra okur
+                    write_data <= ps2_key_event;
+                end else if (data_addr == 32'h4030_0000) begin
+                    // doomgeneric DG_GetTicksMs
+                    write_data <= ms_counter;
+                end else if (data_addr == 32'h4040_0000) begin
+                    // doomgeneric DG_DrawFrame vsync bekleme (CDC sync'd)
+                    write_data <= {31'd0, hdmi_vsync_d2};
+                end else begin
+                    write_data <= 32'd0;
+                end
+                write_enable <= 1;
+                state <= C_EXECUTE;
+            end
+
+            C_IO_WRITE: begin
+                if (data_addr >= 32'h4000_0000 && data_addr <= 32'h4000_FFFC) begin
+                    vram_addr_out <= data_addr[15:2];
+                    vram_data_out <= cpu_store_data;
+                    vram_write_en <= 1;
+                    state <= C_EXECUTE;
+                end
+                else if (data_addr == 32'h4020_0000) begin
+                    cpu_uart_msg <= cpu_store_data;
+                    cpu_byte_idx <= 0;
+                    return_state <= C_EXECUTE;
+                    state <= C_UART_SEND;
+                end
+                else begin
+                    state <= C_EXECUTE;
+                end
+            end
+
+            // ========================================================
+            // THE WRAP-UP STATE & PREFETCH TRIGGER
+            // ========================================================
+            C_EXECUTE: begin
+                write_enable <= 0;
+                vram_write_en <= 0;
+
+                program_counter <= program_counter + 32'd4;
+                is_instruction_fetch <= 1;
+
+                if (program_counter[3:2] == 2'b00) begin
+                    state <= C_PREFETCH_ISSUE;
+                end else if (program_counter[3:2] == 2'b11) begin
+                    state <= C_DDR_WAIT_READ;
+                end else begin
+                    state <= C_LOAD_INSTR;
+                end
+            end
+
+            // --- THE BACKGROUND PREFETCHER STATES ---
+            C_PREFETCH_ISSUE: begin
+                if (ddr_cmd_ready) begin
+                    cpu_ddr_cmd <= 3'b001;
+                    cpu_ddr_cmd_en <= 1;
+                    cpu_user_addr <= {program_counter[27:4], 3'b000} + 27'd8;
+                    rq_is_data[rq_head] <= 0;
+                    case (rq_head)
+                        2'd0: rq_addr_0 <= {program_counter[27:4], 3'b000} + 27'd8;
+                        2'd1: rq_addr_1 <= {program_counter[27:4], 3'b000} + 27'd8;
+                        2'd2: rq_addr_2 <= {program_counter[27:4], 3'b000} + 27'd8;
+                        2'd3: rq_addr_3 <= {program_counter[27:4], 3'b000} + 27'd8;
+                    endcase
+                    rq_head <= rq_head + 2'd1;
+                    state <= C_PREFETCH_CLEANUP;
+                end
+            end
+
+            C_PREFETCH_CLEANUP: begin
+                cpu_ddr_cmd_en <= 0;
+                state <= C_LOAD_INSTR;
+            end
+
+            // ========================================================
+            // LOAD STATE (BYTE/HALFWORD/WORD)
+            // ========================================================
+            C_FINISH_DATA_READ: begin
+                case (data_addr[3:2])
+                    2'b00: raw_word = {memory_read_reg[103:96], memory_read_reg[111:104], memory_read_reg[119:112], memory_read_reg[127:120]};
+                    2'b01: raw_word = {memory_read_reg[71:64],  memory_read_reg[79:72],   memory_read_reg[87:80],   memory_read_reg[95:88]};
+                    2'b10: raw_word = {memory_read_reg[39:32],  memory_read_reg[47:40],   memory_read_reg[55:48],   memory_read_reg[63:56]};
+                    2'b11: raw_word = {memory_read_reg[7:0],    memory_read_reg[15:8],    memory_read_reg[23:16],   memory_read_reg[31:24]};
+                endcase
+
+                case (funct3)
+                    3'b000:
+                        case (data_addr[1:0])
+                            2'b00: write_data <= {{24{raw_word[7]}},  raw_word[7:0]};
+                            2'b01: write_data <= {{24{raw_word[15]}}, raw_word[15:8]};
+                            2'b10: write_data <= {{24{raw_word[23]}}, raw_word[23:16]};
+                            2'b11: write_data <= {{24{raw_word[31]}}, raw_word[31:24]};
+                        endcase
+                    3'b100:
+                        case (data_addr[1:0])
+                            2'b00: write_data <= {24'd0, raw_word[7:0]};
+                            2'b01: write_data <= {24'd0, raw_word[15:8]};
+                            2'b10: write_data <= {24'd0, raw_word[23:16]};
+                            2'b11: write_data <= {24'd0, raw_word[31:24]};
+                        endcase
+                    3'b001:
+                        if (data_addr[1] == 1'b0) write_data <= {{16{raw_word[15]}}, raw_word[15:0]};
+                        else                      write_data <= {{16{raw_word[31]}}, raw_word[31:16]};
+                    3'b101:
+                        if (data_addr[1] == 1'b0) write_data <= {16'd0, raw_word[15:0]};
+                        else                      write_data <= {16'd0, raw_word[31:16]};
+                    3'b010:
+                        write_data <= raw_word;
+                    default:
+                        write_data <= raw_word;
+                endcase
+
+                write_enable <= 1;
+                state <= C_EXECUTE;
+            end
+
+            // ========================================================
+            // STORE STATE (BYTE/HALFWORD/WORD MASKS)
+            // ========================================================
+            C_DDR_WAIT_WRITE: begin
+                if (data_addr >= 32'h40000000) begin
+                    state <= C_IO_WRITE;
+                end
+                else if (ddr_cmd_ready && ddr_wr_data_rdy) begin
+                    cpu_ddr_cmd <= 3'b000;
+                    cpu_ddr_cmd_en <= 1;
+                    cpu_user_addr <= {data_addr[27:4], 3'b000};
+
+                    case (funct3[1:0])
+                        2'b00: active_payload = {4{cpu_store_data[7:0]}};
+                        2'b01: active_payload = {2{cpu_store_data[7:0], cpu_store_data[15:8]}};
+                        2'b10: active_payload = {cpu_store_data[7:0], cpu_store_data[15:8], cpu_store_data[23:16], cpu_store_data[31:24]};
+                        default: active_payload = {cpu_store_data[7:0], cpu_store_data[15:8], cpu_store_data[23:16], cpu_store_data[31:24]};
+                    endcase
+
+                    cpu_ddr_wr_data <= {4{active_payload}};
+
+                    case (funct3[1:0])
+                        2'b00:
+                            case (data_addr[1:0])
+                                2'b00: base_mask = 4'b0111;
+                                2'b01: base_mask = 4'b1011;
+                                2'b10: base_mask = 4'b1101;
+                                2'b11: base_mask = 4'b1110;
+                            endcase
+                        2'b01:
+                            if (data_addr[1] == 1'b0) base_mask = 4'b0011;
+                            else                      base_mask = 4'b1100;
+                        2'b10:
+                            base_mask = 4'b0000;
+                        default:
+                            base_mask = 4'b0000;
+                    endcase
+
+                    case (data_addr[3:2])
+                        2'b00: cpu_ddr_wr_data_mask <= {base_mask, 12'hFFF};
+                        2'b01: cpu_ddr_wr_data_mask <= {4'hF, base_mask, 8'hFF};
+                        2'b10: cpu_ddr_wr_data_mask <= {8'hFF, base_mask, 4'hF};
+                        2'b11: cpu_ddr_wr_data_mask <= {12'hFFF, base_mask};
+                    endcase
+
+                    cpu_ddr_wr_data_en <= 1;
+                    cpu_ddr_wr_data_end <= 1;
+                    dcache_inv_en <= 1;
+                    dcache_inv_addr <= {data_addr[27:4], 3'b000};
+                    state <= C_DDR_WRITE;
+                end
+            end
+
+            C_DDR_WRITE: begin
+                cpu_ddr_cmd_en <= 0;
+                cpu_ddr_wr_data_en <= 0;
+                cpu_ddr_wr_data_end <= 0;
+                dcache_inv_en <= 0;
+                state <= C_EXECUTE;
+            end
+
+            // ========================================================
+            // CRASH / END OF PROGRAM DUMP
+            // ========================================================
+            C_HALT: begin
+                dump_reg_idx <= 5'd0;
+                state <= C_HALT_SETUP;
+            end
+
+            C_HALT_SETUP: begin
+                read1_addr <= dump_reg_idx;
+                state <= C_HALT_FETCH;
+            end
+
+            C_HALT_FETCH: begin
+                cpu_uart_msg <= read1_data;
+                cpu_byte_idx <= 0;
+                return_state <= C_HALT_NEXT;
+                state <= C_UART_SEND;
+            end
+
+            C_HALT_NEXT: begin
+                if (dump_reg_idx == 5'd31) begin
+                    state <= C_HALT_FOREVER;
+                end else begin
+                    dump_reg_idx <= dump_reg_idx + 5'd1;
+                    state <= C_HALT_SETUP;
+                end
+            end
+
+            C_HALT_FOREVER: begin
+                cpu_done <= 1;
+                state <= C_HALT_FOREVER;
+            end
+
+            default: state <= C_DDR_WAIT_READ;
+        endcase
+    end
+    // --- CTRL+ESC SOFT REBOOT TRIGGER FOR CPU ---
+    else if (cpu_done && ps2_data[4] && ps2_data[7]) begin
+        state <= C_DDR_WAIT_READ;
+        cpu_ddr_cmd_en <= 0;
+        cpu_ddr_wr_data_en <= 0;
+        cpu_ddr_wr_data_end <= 0;
+        cpu_ddr_wr_data_mask <= 16'h0000;
+        cpu_uart_wr_en <= 0;
+        cpu_user_addr <= 27'd0;
+        program_counter <= 32'd0;
+        memory_read_reg <= 0;
+        cpu_byte_idx <= 0;
+        is_instruction_fetch <= 1;
+        data_addr <= 32'd0;
+        cpu_store_data <= 32'd0;
+        vram_write_en <= 0;
+        dump_reg_idx <= 5'd0;
+        pending_exec_state <= 0;
+        cpu_done <= 0;
+
+        rq_head <= 0; rq_tail <= 0; rq_is_data <= 0;
+        pf_valid <= 0; dmem_valid <= 0; pf_ready_addr <= 27'h7FFFFFF;
+    end
+end
+
+endmodule
+
+// =============================================================================
+// ICache — Direct-Mapped 4KB Instruction Cache
+// =============================================================================
+// 256 satır × 128 bit (4 instrüksiyon = 1 DDR3 burst per line)
+// Index  : addr[11:4]  → 8 bit → 256 satır
+// Tag    : addr[31:12] → 20 bit
+// Offset : addr[3:2]   → 2 bit  → hangi instrüksiyon
+// Hit    → 2 saat (BSRAM read latency)
+// Miss   → DDR3 fetch (mevcut mekanizma) + cache doldur
+// =============================================================================
+module ICache (
+    input  wire        clk,
+    input  wire        rst_n,
+    // CPU fetch isteği
+    input  wire [31:0] cpu_addr,
+    input  wire        cpu_req,
+    // CPU'ya cevap
+    output reg  [31:0] cpu_data,
+    output reg         cpu_valid,
+    output wire        cache_hit,   // kombinasyonel
+    // DDR3 miss → cache doldur
+    input  wire [31:0]  fill_addr,
+    input  wire [127:0] fill_data,
+    input  wire         fill_en
+);
+
+// ---------------------------------------------------------------------------
+// Cache belleği (Gowin BSRAM olarak sentezlenir)
+// ---------------------------------------------------------------------------
+(* ram_style = "block" *) reg [127:0] data_mem [0:255];
+(* ram_style = "block" *) reg [31:0]  tag_mem  [0:255];   // [20]=valid, [19:0]=tag
+
+// ---------------------------------------------------------------------------
+// Kombinasyonel hit tespiti
+// ---------------------------------------------------------------------------
+wire [7:0]  idx      = cpu_addr[11:4];
+wire [19:0] req_tag  = cpu_addr[31:12];
+
+reg [127:0] read_line;
+reg [31:0]  tag_out;
+reg [19:0]  req_tag_reg;
+reg [1:0]   word_sel;
+reg         cache_hit_reg;
+
+always @(posedge clk) begin
+    if (cpu_req) begin
+        read_line     <= data_mem[idx];
+        tag_out       <= tag_mem[idx];
+        req_tag_reg   <= req_tag;
+        word_sel      <= cpu_addr[3:2];
+        cache_hit_reg <= 0;   // Reset: yeni istek gelince valid'i kapat
+        cpu_valid     <= 0;
+    end else begin
+        // BSRAM verisi yerleştikten 1 saat sonra hit kararı
+        cache_hit_reg <= tag_out[20] & (tag_out[19:0] == req_tag_reg);
+        cpu_valid     <= cache_hit_reg;
+        // Kayıtlı data çıkışı
+        case (word_sel)
+            2'd0: cpu_data <= read_line[31:0];
+            2'd1: cpu_data <= read_line[63:32];
+            2'd2: cpu_data <= read_line[95:64];
+            2'd3: cpu_data <= read_line[127:96];
+        endcase
+    end
+end
+
+assign cache_hit = cache_hit_reg;
+
+// ---------------------------------------------------------------------------
+// Fill: DDR3'ten gelen 128-bit burst cache'e yaz
+// ---------------------------------------------------------------------------
+always @(posedge clk) begin
+    if (fill_en) begin
+        data_mem[fill_addr[11:4]] <= fill_data;
+        tag_mem [fill_addr[11:4]] <= {11'd0, 1'b1, fill_addr[31:12]};
+    end
+end
+
+// ---------------------------------------------------------------------------
+// Reset: valid bitleri temizle (initial block — Gowin destekler)
+// ---------------------------------------------------------------------------
+integer ci;
+initial begin
+    for (ci = 0; ci < 256; ci = ci + 1) begin
+        tag_mem[ci]  = 32'd0;
+        data_mem[ci] = 128'd0;
+    end
+end
+
+endmodule
+
+// =============================================================================
+// DATA CACHE (DCache)
+// Direct-Mapped 4KB Read-Only Cache (Write-Through / Invalidate on Write)
+// =============================================================================
+module DCache (
+    input  wire        clk,
+    input  wire        rst_n,
+    input  wire [31:0] cpu_addr,
+    input  wire        cpu_req,
+    output reg  [31:0] cpu_data,
+    output reg         cpu_valid,
+    output wire        cache_hit,
+    input  wire [31:0]  fill_addr,
+    input  wire [127:0] fill_data,
+    input  wire         fill_en,
+    input  wire [31:0]  inv_addr,
+    input  wire         inv_en
+);
+
+(* ram_style = "block" *) reg [127:0] data_mem [0:255];
+(* ram_style = "block" *) reg [31:0]  tag_mem  [0:255];   // [20]=valid, [19:0]=tag
+
+wire [7:0]  idx      = cpu_addr[11:4];
+wire [19:0] req_tag  = cpu_addr[31:12];
+
+reg [127:0] read_line;
+reg [31:0]  tag_out;
+reg [19:0]  req_tag_reg;
+reg [1:0]   word_sel;
+reg         cache_hit_reg;
+
+always @(posedge clk) begin
+    if (cpu_req) begin
+        read_line     <= data_mem[idx];
+        tag_out       <= tag_mem[idx];
+        req_tag_reg   <= req_tag;
+        word_sel      <= cpu_addr[3:2];
+        cache_hit_reg <= 0;   // Reset: yeni istek gelince valid'i kapat
+        cpu_valid     <= 0;
+    end else begin
+        // BSRAM verisi yerlestikten 1 saat sonra hit karari
+        cache_hit_reg <= tag_out[20] & (tag_out[19:0] == req_tag_reg);
+        cpu_valid     <= cache_hit_reg;
+        // Kayitli data cikisi
+        case (word_sel)
+            2'd0: cpu_data <= read_line[31:0];
+            2'd1: cpu_data <= read_line[63:32];
+            2'd2: cpu_data <= read_line[95:64];
+            2'd3: cpu_data <= read_line[127:96];
+        endcase
+    end
+end
+
+assign cache_hit = cache_hit_reg;
+
+always @(posedge clk) begin
+    if (fill_en) begin
+        data_mem[fill_addr[11:4]] <= fill_data;
+    end
+end
+
+wire [7:0]  tag_wr_addr = fill_en ? fill_addr[11:4] : inv_addr[11:4];
+wire [31:0] tag_wr_data = fill_en ? {11'd0, 1'b1, fill_addr[31:12]} : 32'd0;
+
+always @(posedge clk) begin
+    if (fill_en || inv_en) begin
+        tag_mem[tag_wr_addr] <= tag_wr_data;
+    end
+end
+
+integer ci2;
+initial begin
+    for (ci2 = 0; ci2 < 256; ci2 = ci2 + 1) begin
+        tag_mem[ci2]  = 32'd0;
+        data_mem[ci2] = 128'd0;
+    end
+end
+
+endmodule
+
+
+================================================================================
+// FILE: PS2_Controller.v
+================================================================================
+
+// =============================================================================
+// PS2_Controller.v  — GoWin Tang Primer 20K  DOOM FPGA
+// =============================================================================
+//
+// doomgeneric.h arayüzüne göre tasarlandı:
+//   DG_GetKey(int* pressed, unsigned char* doomKey)
+//   → Hardware IO 0x4010_0000 = DOOM_KEYS bitmask  (live state)
+//   → Hardware IO 0x4010_0004 = KEY_EVENT           (en son event)
+//     [31]    = 1:press / 0:release
+//     [7:0]   = doomkeys.h değeri (KEY_UPARROW=0xAD, KEY_FIRE=0xA3 vb.)
+//
+// doomkeys.h sabit değerleri:
+//   KEY_RIGHTARROW = 0xAE    KEY_LEFTARROW  = 0xAC
+//   KEY_UPARROW    = 0xAD    KEY_DOWNARROW  = 0xAF
+//   KEY_FIRE(Ctrl) = 0xA3    KEY_USE(Space) = 0xA2
+//   KEY_RSHIFT     = 0xB6    KEY_ESCAPE     = 27
+//   KEY_ENTER      = 13      KEY_TAB        = 9
+//   KEY_RALT/LALT  = 0xB8    KEY_F1..F10    = 0xBB..0xC4
+//
+// DOOM_KEYS bit atamaları (mevcut C koduyla uyumlu):
+//   [0]=İleri(Up)  [1]=Geri(Down)  [2]=SolDön(Left)  [3]=SağDön(Right)
+//   [4]=Ateş(Ctrl) [5]=Kullan(Space) [6]=Koş(Shift)  [7]=Esc
+//   [8]=Enter      [9]=Tab          [10]=Sol(strafeL) [11]=Sağ(strafeR)
+//   [12]=Alt        [13]=F1 [14]=F2 [15]=F3 [16]=F4 [17]=F5
+//   [18]=F6 [19]=F7 [20]=F8 [21]=F9 [22]=F10
+//   [23]=+ [24]=-
+// =============================================================================
+module PS2_Controller(
+    input  wire        sys_clk,      // ~100 MHz (ddr_user_clk)
+    input  wire        sys_rst_n,
+    input  wire        PS2_D_I,
+    input  wire        PS2_CLK_I,
+    // --- UART klavye girişi (key_catcher.py → COM6) ---
+    input  wire        uart_key_ready,  // UART_Controller.read_done
+    input  wire [7:0]  uart_key_data,   // UART_Controller.data_readed
+    output reg  [31:0] DOOM_KEYS    = 32'd0,  // IO 0x4010_0000
+    output reg  [31:0] KEY_EVENT    = 32'd0,  // IO 0x4010_0004
+    output reg         KEY_EV_VALID = 1'b0    // 1-saat pulse
+);
+
+// ---------------------------------------------------------------------------
+// 1. Level-shift (donanım open-collector tersleyici)
+// ---------------------------------------------------------------------------
+wire ps2_d_raw   = ~PS2_D_I;
+wire ps2_clk_raw = ~PS2_CLK_I;
+
+// ---------------------------------------------------------------------------
+// 1b. 1 ms tick üreteci  (100 MHz → 1 kHz)
+// ---------------------------------------------------------------------------
+reg [16:0] ms_div  = 0;
+reg        ms_tick = 0;
+
+always @(posedge sys_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        ms_div  <= 0;
+        ms_tick <= 0;
+    end else begin
+        ms_tick <= 0;
+        if (ms_div >= 17'd99_999) begin
+            ms_div  <= 0;
+            ms_tick <= 1;
+        end else begin
+            ms_div <= ms_div + 17'd1;
+        end
+    end
+end
+
+// ---------------------------------------------------------------------------
+// 2. Debounce filtresi (~320 ns, 32 sample)
+// ---------------------------------------------------------------------------
+reg [4:0] clk_filt = 0, dat_filt = 0;
+reg ps2_clk_c = 1, ps2_dat_c = 1;
+
+always @(posedge sys_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        clk_filt <= 0; dat_filt <= 0;
+        ps2_clk_c <= 1; ps2_dat_c <= 1;
+    end else begin
+        if (ps2_clk_raw) begin
+            if (clk_filt != 5'h1F) clk_filt <= clk_filt + 5'd1;
+            else ps2_clk_c <= 1;
+        end else begin
+            if (clk_filt != 5'h00) clk_filt <= clk_filt - 5'd1;
+            else ps2_clk_c <= 0;
+        end
+        if (ps2_d_raw) begin
+            if (dat_filt != 5'h1F) dat_filt <= dat_filt + 5'd1;
+            else ps2_dat_c <= 1;
+        end else begin
+            if (dat_filt != 5'h00) dat_filt <= dat_filt - 5'd1;
+            else ps2_dat_c <= 0;
+        end
+    end
+end
+
+// ---------------------------------------------------------------------------
+// 3. Falling-edge detect
+// ---------------------------------------------------------------------------
+reg  ps2_clk_prev = 1;
+wire clk_fall     = (~ps2_clk_c & ps2_clk_prev);
+
+// ---------------------------------------------------------------------------
+// 4. Timeout watchdog (~2 ms)
+// ---------------------------------------------------------------------------
+reg [17:0] timeout_cnt = 0;
+wire       timed_out   = (timeout_cnt >= 18'd200_000);
+
+// ---------------------------------------------------------------------------
+// 5. PS/2 seri alıcı
+// ---------------------------------------------------------------------------
+reg [10:0] shift_reg  = 0;
+reg [3:0]  bit_cnt    = 0;
+reg [7:0]  ps2_byte   = 0;
+reg        byte_rdy   = 0;
+
+always @(posedge sys_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        ps2_clk_prev <= 1; shift_reg <= 0; bit_cnt <= 0;
+        ps2_byte <= 0; byte_rdy <= 0; timeout_cnt <= 0;
+    end else begin
+        ps2_clk_prev <= ps2_clk_c;
+        byte_rdy     <= 0;
+
+        if (bit_cnt > 0) begin
+            timeout_cnt <= timeout_cnt + 18'd1;
+            if (timed_out) begin bit_cnt <= 0; timeout_cnt <= 0; end
+        end else begin
+            timeout_cnt <= 0;
+        end
+
+        if (clk_fall) begin
+            timeout_cnt <= 0;
+            if (bit_cnt == 0) begin
+                if (!ps2_dat_c) begin
+                    shift_reg[0] <= 0;
+                    bit_cnt <= 1;
+                end
+            end else begin
+                shift_reg[bit_cnt] <= ps2_dat_c;
+                if (bit_cnt == 10) begin
+                    if (shift_reg[0] == 0 && ps2_dat_c == 1) begin
+                        ps2_byte <= shift_reg[8:1];
+                        byte_rdy <= 1;
+                    end
+                    bit_cnt <= 0;
+                end else begin
+                    bit_cnt <= bit_cnt + 4'd1;
+                end
+            end
+        end
+    end
+end
+
+// ---------------------------------------------------------------------------
+// 6. Protokol dekoder
+//    E0 prefix → is_ext=1, F0 → release, sonra scan kodu
+// ---------------------------------------------------------------------------
+localparam S_IDLE = 2'd0;
+localparam S_EXT  = 2'd1;   // E0 alındı
+localparam S_REL  = 2'd2;   // F0 alındı (release gelecek)
+
+reg [1:0] dec_st = S_IDLE;
+reg       is_ext = 0;        // Son prefix E0 mıydı?
+
+// ---------------------------------------------------------------------------
+// 7. PS/2 scan kodu → {DOOM_KEYS_bit[4:0], doomkey_value[7:0]} dönüştürücü
+//
+//    doomkeys.h sabitlerine birebir uygun
+// ---------------------------------------------------------------------------
+// doomkey değerleri (doomkeys.h)
+localparam [7:0] DK_UP    = 8'hAD;  // KEY_UPARROW    → ileri
+localparam [7:0] DK_DOWN  = 8'hAF;  // KEY_DOWNARROW  → geri
+localparam [7:0] DK_LEFT  = 8'hAC;  // KEY_LEFTARROW  → sola dön
+localparam [7:0] DK_RIGHT = 8'hAE;  // KEY_RIGHTARROW → sağa dön
+localparam [7:0] DK_FIRE  = 8'hA3;  // KEY_FIRE       → Ctrl
+localparam [7:0] DK_USE   = 8'hA2;  // KEY_USE        → Space
+localparam [7:0] DK_SHIFT = 8'hB6;  // KEY_RSHIFT     → Shift
+localparam [7:0] DK_ESC   = 8'd27;  // KEY_ESCAPE
+localparam [7:0] DK_ENTER = 8'd13;  // KEY_ENTER
+localparam [7:0] DK_TAB   = 8'd9;   // KEY_TAB
+localparam [7:0] DK_ALT   = 8'hB8;  // KEY_LALT/RALT
+localparam [7:0] DK_F1    = 8'hBB;  // KEY_F1  = 0x80+0x3B
+localparam [7:0] DK_F2    = 8'hBC;
+localparam [7:0] DK_F3    = 8'hBD;
+localparam [7:0] DK_F4    = 8'hBE;
+localparam [7:0] DK_F5    = 8'hBF;
+localparam [7:0] DK_F6    = 8'hC0;
+localparam [7:0] DK_F7    = 8'hC1;
+localparam [7:0] DK_F8    = 8'hC2;
+localparam [7:0] DK_F9    = 8'hC3;
+localparam [7:0] DK_F10   = 8'hC4;
+localparam [7:0] DK_PLUS  = 8'h3D;  // KEY_EQUALS (+)
+localparam [7:0] DK_MINUS = 8'h2D;  // KEY_MINUS  (-)
+localparam [7:0] DK_NONE  = 8'h00;  // tanımsız
+
+// Dönüştürücü fonksiyon: {bit[4:0], doomkey[7:0]} = 13-bit
+// bit=5'h1F → tanımsız (görmezden gel)
+function [12:0] scan2doom;
+    input       ext;
+    input [7:0] sc;
+    begin
+        case ({ext, sc})
+            // ---- Normal (non-extended) tuşlar ----
+            {1'b0, 8'h1D}: scan2doom = {5'd0,  DK_UP};    // W → ileri
+            {1'b0, 8'h1B}: scan2doom = {5'd1,  DK_DOWN};  // S → geri
+            {1'b0, 8'h1C}: scan2doom = {5'd2,  DK_LEFT};  // A → sol strafe
+            {1'b0, 8'h23}: scan2doom = {5'd3,  DK_RIGHT}; // D → sağ strafe
+            {1'b0, 8'h14}: scan2doom = {5'd4,  DK_FIRE};  // L-Ctrl
+            {1'b0, 8'h29}: scan2doom = {5'd5,  DK_USE};   // Space
+            {1'b0, 8'h12}: scan2doom = {5'd6,  DK_SHIFT}; // L-Shift
+            {1'b0, 8'h59}: scan2doom = {5'd6,  DK_SHIFT}; // R-Shift
+            {1'b0, 8'h76}: scan2doom = {5'd7,  DK_ESC};   // Esc
+            {1'b0, 8'h5A}: scan2doom = {5'd8,  DK_ENTER}; // Enter
+            {1'b0, 8'h0D}: scan2doom = {5'd9,  DK_TAB};   // Tab
+            {1'b0, 8'h11}: scan2doom = {5'd12, DK_ALT};   // L-Alt
+            {1'b0, 8'h05}: scan2doom = {5'd13, DK_F1};    // F1
+            {1'b0, 8'h06}: scan2doom = {5'd14, DK_F2};    // F2
+            {1'b0, 8'h04}: scan2doom = {5'd15, DK_F3};    // F3
+            {1'b0, 8'h0C}: scan2doom = {5'd16, DK_F4};    // F4
+            {1'b0, 8'h03}: scan2doom = {5'd17, DK_F5};    // F5
+            {1'b0, 8'h0B}: scan2doom = {5'd18, DK_F6};    // F6
+            {1'b0, 8'h83}: scan2doom = {5'd19, DK_F7};    // F7
+            {1'b0, 8'h0A}: scan2doom = {5'd20, DK_F8};    // F8
+            {1'b0, 8'h01}: scan2doom = {5'd21, DK_F9};    // F9
+            {1'b0, 8'h09}: scan2doom = {5'd22, DK_F10};   // F10
+            {1'b0, 8'h55}: scan2doom = {5'd23, DK_PLUS};  // =
+            {1'b0, 8'h4E}: scan2doom = {5'd24, DK_MINUS}; // -
+            // ---- Extended (E0) tuşlar — OK tuşları ----
+            {1'b1, 8'h75}: scan2doom = {5'd0,  DK_UP};    // ↑ → ileri (bit 0, aynı W gibi)
+            {1'b1, 8'h72}: scan2doom = {5'd1,  DK_DOWN};  // ↓ → geri
+            {1'b1, 8'h6B}: scan2doom = {5'd2,  DK_LEFT};  // ← → sola dön
+            {1'b1, 8'h74}: scan2doom = {5'd3,  DK_RIGHT}; // → → sağa dön
+            {1'b1, 8'h14}: scan2doom = {5'd4,  DK_FIRE};  // R-Ctrl → ateş
+            {1'b1, 8'h11}: scan2doom = {5'd12, DK_ALT};   // R-Alt
+            {1'b1, 8'h5A}: scan2doom = {5'd8,  DK_ENTER}; // Numpad Enter
+            default:       scan2doom = {5'h1F, DK_NONE};  // tanımsız
+        endcase
+    end
+endfunction
+
+// ---------------------------------------------------------------------------
+// 9. UART bit_index → doomkeys.h değeri dönüştürücü
+//    (key_catcher.py bit indekslerini Doom'un beklediği key code'larına çevirir)
+// ---------------------------------------------------------------------------
+function [7:0] bit2doomkey;
+    input [4:0] bit_idx;
+    begin
+        case (bit_idx)
+            5'd0:  bit2doomkey = 8'hAD; // KEY_UPARROW
+            5'd1:  bit2doomkey = 8'hAF; // KEY_DOWNARROW
+            5'd2:  bit2doomkey = 8'hAC; // KEY_LEFTARROW
+            5'd3:  bit2doomkey = 8'hAE; // KEY_RIGHTARROW
+            5'd4:  bit2doomkey = 8'hA3; // KEY_FIRE (Ctrl)
+            5'd5:  bit2doomkey = 8'hA2; // KEY_USE  (Space)
+            5'd6:  bit2doomkey = 8'hB6; // KEY_RSHIFT
+            5'd7:  bit2doomkey = 8'd27; // KEY_ESCAPE
+            5'd8:  bit2doomkey = 8'd13; // KEY_ENTER
+            5'd9:  bit2doomkey = 8'hB8; // KEY_ALT
+            5'd10: bit2doomkey = 8'hA0; // KEY_STRAFE_L
+            5'd11: bit2doomkey = 8'hA1; // KEY_STRAFE_R
+            5'd12: bit2doomkey = 8'd49; // '1'
+            5'd13: bit2doomkey = 8'd50; // '2'
+            5'd14: bit2doomkey = 8'd51; // '3'
+            5'd15: bit2doomkey = 8'd52; // '4'
+            5'd16: bit2doomkey = 8'd53; // '5'
+            5'd17: bit2doomkey = 8'd54; // '6'
+            5'd18: bit2doomkey = 8'd55; // '7'
+            5'd19: bit2doomkey = 8'd9;  // KEY_TAB
+            5'd20: bit2doomkey = 8'hBB; // KEY_F1
+            5'd21: bit2doomkey = 8'hBC; // KEY_F2
+            5'd22: bit2doomkey = 8'hBD; // KEY_F3
+            5'd23: bit2doomkey = 8'hBF; // KEY_F5
+            5'd24: bit2doomkey = 8'hC0; // KEY_F6
+            5'd25: bit2doomkey = 8'hC1; // KEY_F7
+            5'd26: bit2doomkey = 8'hC2; // KEY_F8
+            5'd27: bit2doomkey = 8'hC3; // KEY_F9
+            5'd28: bit2doomkey = 8'hC4; // KEY_F10
+            5'd31: bit2doomkey = 8'h2D; // KEY_MINUS
+            default: bit2doomkey = 8'h00;
+        endcase
+    end
+endfunction
+
+// ---------------------------------------------------------------------------
+// 8. Birleşik dekoder — PS/2 + UART (tek always bloğu — çift sürücü hatası önlenir)
+// ---------------------------------------------------------------------------
+reg [31:0] phys_keys = 32'd0;   // anlık fiziksel tuş durumu (hold extension öncesi)
+reg uart_press_flag = 0;
+reg uart_byte0_seen = 0;
+
+// Rising-edge detector for uart_key_ready (defensive: treats it as a pulse
+// even if the upstream UART somehow produces a level signal)
+reg uart_key_ready_prev = 0;
+wire uart_key_pulse = uart_key_ready & ~uart_key_ready_prev;
+
+always @(posedge sys_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        dec_st          <= S_IDLE;
+        is_ext          <= 0;
+        phys_keys       <= 32'd0;
+        KEY_EVENT       <= 32'd0;
+        KEY_EV_VALID    <= 0;
+        uart_press_flag <= 0;
+        uart_byte0_seen <= 0;
+        uart_key_ready_prev <= 0;
+    end else begin
+        KEY_EV_VALID <= 0;  // her saat sıfırla, pulse olarak çalışsın
+        uart_key_ready_prev <= uart_key_ready;  // edge detector update
+
+        // ── PS/2 Dekoderi ──────────────────────────────────────────────
+        if (byte_rdy) begin
+            case (dec_st)
+                S_IDLE: begin
+                    if (ps2_byte == 8'hE0) begin
+                        is_ext <= 1;
+                        dec_st <= S_EXT;
+                    end else if (ps2_byte == 8'hF0) begin
+                        is_ext <= 0;
+                        dec_st <= S_REL;
+                    end else begin
+                        begin : press_n
+                            reg [12:0] kd;
+                            kd = scan2doom(1'b0, ps2_byte);
+                            if (kd[12:8] != 5'h1F) begin
+                                phys_keys[kd[12:8]] <= 1'b1;
+                                KEY_EVENT           <= {1'b1, 23'd0, kd[7:0]};
+                                KEY_EV_VALID        <= 1;
+                            end
+                        end
+                        is_ext <= 0;
+                        dec_st <= S_IDLE;
+                    end
+                end
+                S_EXT: begin
+                    if (ps2_byte == 8'hF0) begin
+                        dec_st <= S_REL;
+                    end else begin
+                        begin : press_e
+                            reg [12:0] kd;
+                            kd = scan2doom(1'b1, ps2_byte);
+                            if (kd[12:8] != 5'h1F) begin
+                                phys_keys[kd[12:8]] <= 1'b1;
+                                KEY_EVENT           <= {1'b1, 23'd0, kd[7:0]};
+                                KEY_EV_VALID        <= 1;
+                            end
+                        end
+                        is_ext <= 0;
+                        dec_st <= S_IDLE;
+                    end
+                end
+                S_REL: begin
+                    begin : release_k
+                        reg [12:0] kd;
+                        kd = scan2doom(is_ext, ps2_byte);
+                        if (kd[12:8] != 5'h1F) begin
+                            phys_keys[kd[12:8]] <= 1'b0;
+                            KEY_EVENT           <= {1'b0, 23'd0, kd[7:0]};
+                            KEY_EV_VALID        <= 1;
+                        end
+                    end
+                    is_ext <= 0;
+                    dec_st <= S_IDLE;
+                end
+                default: begin
+                    dec_st <= S_IDLE;
+                    is_ext <= 0;
+                end
+            endcase
+        end
+
+        // ── UART Dekoderi (key_catcher.py: [0x01/0x00][bit_index]) ────
+        // uart_key_pulse is a 1-cycle rising-edge strobe — processed exactly once
+        if (uart_key_pulse) begin
+            if (!uart_byte0_seen) begin
+                if (uart_key_data == 8'h01 || uart_key_data == 8'h00) begin
+                    uart_press_flag <= (uart_key_data == 8'h01);
+                    uart_byte0_seen <= 1;
+                end
+            end else begin
+                uart_byte0_seen <= 0;
+                if (uart_key_data <= 8'd31) begin
+                    phys_keys[uart_key_data[4:0]] <= uart_press_flag;
+                    KEY_EVENT    <= {uart_press_flag, 23'd0,
+                                     bit2doomkey(uart_key_data[4:0])};
+                    KEY_EV_VALID <= 1;
+                end
+            end
+        end
+
+    end
+end
+
+// ---------------------------------------------------------------------------
+// 10. Hold extension — fiziksel bırakma sonrası 150 ms DOOM_KEYS'i yüksek tutar
+//     Böylece hızlı tap (press+release < 1 frame) CPU tarafından yakalanır.
+// ---------------------------------------------------------------------------
+reg [7:0] hold_cnt [0:31];
+integer   hold_i;
+
+initial begin
+    for (hold_i = 0; hold_i < 32; hold_i = hold_i + 1)
+        hold_cnt[hold_i] = 8'd0;
+end
+
+always @(posedge sys_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        DOOM_KEYS <= 32'd0;
+        for (hold_i = 0; hold_i < 32; hold_i = hold_i + 1)
+            hold_cnt[hold_i] <= 8'd0;
+    end else begin
+        for (hold_i = 0; hold_i < 32; hold_i = hold_i + 1) begin
+            if (phys_keys[hold_i]) begin
+                // tuş basılı: çıkışı 1 yap ve sayacı doldur
+                DOOM_KEYS[hold_i]   <= 1'b1;
+                hold_cnt[hold_i]    <= 8'd150;
+            end else begin
+                // tuş bırakıldı: sayaç sıfırlanana kadar çıkışı 1 tut
+                if (ms_tick && hold_cnt[hold_i] != 8'd0)
+                    hold_cnt[hold_i] <= hold_cnt[hold_i] - 8'd1;
+                if (hold_cnt[hold_i] == 8'd0)
+                    DOOM_KEYS[hold_i] <= 1'b0;
+            end
+        end
+    end
+end
+
+endmodule
+
+================================================================================
+// FILE: SPI.v
+================================================================================
+
+module SPI_Controller #(
+    parameter CLK_DIV = 7, // 0 = Full Speed, 31 = Logic Analyzer Speed
+    parameter DATA_LENGTH = 128
+    )(
+    input wire sys_clk,        
+    input wire sys_rst_n,      
+    input wire MISO,           
+    
+    input wire read_enable,   
+    input wire [7:0] command,  
+    input wire [23:0] address, 
+    input wire [7:0] total_bits,   
+    
+    output reg [DATA_LENGTH-1:0] data_readed, 
+    output reg MOSI,           
+    output reg CS,             
+    output wire CLK,           
+    output reg done            
+);
+
+    reg spi_clk;
+
+    reg com_status;
+    reg [7:0] current_bit; 
+    reg [4:0] speed_divider = 0; 
+    
+    assign CLK = spi_clk;
+    
+    always @(posedge sys_clk or negedge sys_rst_n) begin
+        if (!sys_rst_n) begin
+            spi_clk <= 0; 
+            CS <= 1;
+            MOSI <= 1;
+            done <= 0;
+            com_status <= 0;
+            current_bit <= 0;
+            data_readed <= 32'b0;
+            speed_divider <= 0;
+
+        end else begin
+            
+            // STATE 1: Start the transaction
+            if (read_enable && !com_status && !done) begin
+                com_status <= 1;
+                CS <= 0;            
+                current_bit <= 0;
+                MOSI <= command[7]; 
+                spi_clk <= 0;
+                data_readed <= 32'b0;
+                speed_divider <= 0;
+            end 
+            
+            // STATE 2: The Active Transaction
+            else if (com_status) begin
+
+                if (speed_divider >= CLK_DIV) begin
+                    speed_divider <= 0;
+
+                    if (current_bit == (total_bits-1) && spi_clk == 1) begin
+                        com_status <= 0;
+                        CS <= 1;
+                        MOSI <= 1;
+                        done <= 1;
+                        spi_clk <= 0;
+                    end else begin
+                        spi_clk <= ~spi_clk; 
+                        
+                        if (spi_clk == 0) begin 
+                            // --- RISING EDGE: Sample MISO ---
+                            data_readed <= {data_readed[DATA_LENGTH-2:0], MISO};  //FIFO shifthing read
+                        end else begin
+                            // --- FALLING EDGE: Update MOSI ---
+                            if (current_bit < 7) begin
+                                MOSI <= command[6 - current_bit];
+                            end else if (current_bit < 31) begin
+                                MOSI <= address[23 - (current_bit - 7)];
+                            end else begin
+                                MOSI <= 0; 
+                            end
+                            current_bit <= current_bit + 8'd1;
+                        end
+                    end
+                end
+
+                else begin
+                    speed_divider <= speed_divider + 5'd1;
+                end
+            end 
+            
+            // STATE 3: Clear the done flag
+            else if (!read_enable && done) begin
+                done <= 0;
+            end
+            
+            // STATE 4: Idle State (Only happens when com_status is 0 and not starting)
+            else if (!com_status && !done) begin
+                CS <= 1;
+                MOSI <= 1;
+                spi_clk <= 0; 
+                speed_divider <= 0;
+            end
+            
+        end
+    end
+endmodule
+
+================================================================================
+// FILE: UART.v
+================================================================================
+
+module UART_Controller
+#(
+    parameter BAUD_RATE = 115200,
+    parameter CLOCK_FREQ = 100000000
+)(
+    input sys_clk,
+    input sys_rst_n,
+    input write_enable,
+    input [7:0] data_to_send,
+    input RX,
+    output reg TX = 1,
+    output reg write_done = 0,
+    output reg read_done = 0,
+    output reg [7:0] data_readed
+);
+
+localparam counter_up_limit = CLOCK_FREQ / BAUD_RATE;
+
+reg [31:0] clock_counter = 0;
+reg [3:0] current_bit = 0; // supports 0-9 (start + 8 data + stop)
+reg write_status = 0;
+reg write_status_prev = 0;
+
+reg current_RX_bit = 1;
+reg prev_RX_bit = 1;
+reg [31:0] clock_counter_RX = 0;
+reg [3:0] current_bit_RX = 0; // supports 0-9 (start + 8 data + stop)
+reg read_status = 0;
+reg read_status_prev = 0;
+reg read_done_set = 0;  // internal: 1 when stop bit just sampled OK
+
+
+
+always @(posedge sys_clk or negedge sys_rst_n) begin
+    if (!sys_rst_n) begin
+        TX <= 1;
+        clock_counter <= 0;
+        current_bit <= 0;
+        write_status <= 0;
+        write_status_prev <= 0;
+        write_done <= 0;
+        read_done <= 0;
+        data_readed <= 8'b11111111;
+        current_RX_bit <= 1;
+        prev_RX_bit <= 1;
+        clock_counter_RX <= 0;
+        current_bit_RX <= 0; // supports 0-9 (start + 8 data + stop)
+        read_status <= 0;
+        read_status_prev <= 0;
+
+//----------For TX-------------------------------------------------------------
+    end else begin
+        if (write_enable && !write_status && !write_status_prev) begin
+            write_status <= 1;
+        end else if (!write_enable) begin
+            write_done <= 0;
+            write_status <= 0;
+            write_status_prev <= 0;
+        end
+
+        if (clock_counter >= counter_up_limit) begin
+            clock_counter <= 0;
+
+            if (write_status && !write_status_prev) begin
+                TX <= 0; // Start bit
+                write_status_prev <= 1;
+            end
+            else if (write_status) begin
+                if (current_bit < 8) begin
+                    TX <= data_to_send[current_bit];
+                    current_bit <= current_bit + 4'd1;
+                end
+                else if (current_bit == 8) begin
+                    TX <= 1; // Stop bit
+                    current_bit <= current_bit + 4'd1;
+                end
+                else begin
+                    current_bit <= 0;
+                    write_status <= 0;
+                    write_done <= 1;
+                end
+            end
+
+        end else begin
+            clock_counter <= clock_counter + 1;
+        end
+
+//--------------For RX--------------------------------------------------------------------------------------------
+        // 2-stage synchronizer for RX to prevent metastability
+        current_RX_bit <= RX;
+        prev_RX_bit <= current_RX_bit;
+
+        // read_done is a 1-cycle pulse: set it one cycle, then clear it
+        read_done <= read_done_set;
+        read_done_set <= 0;
+
+        if (!read_status && !read_status_prev) begin
+            // Idle state, look for falling edge of start bit
+            if (current_RX_bit == 0 && prev_RX_bit == 1) begin
+                read_status <= 1;
+                clock_counter_RX <= 0;
+                current_bit_RX <= 0;
+                data_readed <= 8'b1111_1111;
+            end
+        end else if (read_status) begin
+            clock_counter_RX <= clock_counter_RX + 1;
+            
+            // Phase 1: Wait half a baud period to center the sample point
+            if (!read_status_prev && (clock_counter_RX >= (counter_up_limit / 2))) begin
+                read_status_prev <= 1;
+                clock_counter_RX <= 0; // Reset counter to count full bits now
+            end
+            
+            // Phase 2: Sample every full baud period
+            if (read_status_prev && (clock_counter_RX >= counter_up_limit)) begin
+                clock_counter_RX <= 0;
+                
+                if (current_bit_RX < 8) begin
+                    // Shift in data using the synchronized RX signal
+                    data_readed[current_bit_RX] <= prev_RX_bit;             
+                    current_bit_RX <= current_bit_RX + 4'd1;
+                end else begin
+                    // Stop bit logic
+                    if (prev_RX_bit == 1) begin // Stop bit should be high
+                        read_done_set <= 1;  // Will generate a 1-cycle pulse on read_done
+                    end else begin
+                        // Framing error — discard
+                        data_readed <= 8'b1111_1111;
+                    end
+                    read_status <= 0;
+                    read_status_prev <= 0;
+                end
+            end
+        end
+    end
+end
+endmodule
+
+
+================================================================================
+// FILE: VGA.v
+================================================================================
+
+module VGA_Controller (
+    input  wire sys_clk,      // MUST BE 25 MHz for 640x480!
+    input  wire sys_rst_n,
+    output wire [13:0] vram_read_addr,
+    output wire        vram_read_en,
+    input  wire [31:0] vram_read_data,
+    output wire h_sync_i,
+    output wire v_sync_i,
+    output reg  [2:0] RED,
+    output reg  [2:0] GREEN,
+    output reg  [1:0] BLUE
+);
+
+// 640x480 @ 60Hz Industry Standard Timings (25 MHz Clock)
+parameter H_ACTIVE = 640;
+parameter H_FRONT  = 16;
+parameter H_SYNC   = 96;
+parameter H_BACK   = 48;
+parameter H_TOTAL  = 800;
+
+parameter V_ACTIVE = 480;
+parameter V_FRONT  = 10;
+parameter V_SYNC   = 2;
+parameter V_BACK   = 33;
+parameter V_TOTAL  = 525;
+
+reg [9:0] h_cnt = 0;
+reg [9:0] v_cnt = 0;
+
+// Active LOW Sync Pulses (Standard for 640x480)
+assign h_sync_i = ~(h_cnt >= (H_ACTIVE + H_FRONT) && h_cnt < (H_ACTIVE + H_FRONT + H_SYNC));
+assign v_sync_i = ~(v_cnt >= (V_ACTIVE + V_FRONT) && v_cnt < (V_ACTIVE + V_FRONT + V_SYNC));
+
+// Centering 320x200 (scaled x2) inside 640x480
+// We need a 40 pixel blank border at the top and bottom (40 + 400 + 40 = 480)
+wire image_active = (h_cnt < 640) && (v_cnt >= 40) && (v_cnt < 440);
+
+// X goes 0->639, Y goes 40->439. We divide X by 2, and (Y-40) by 2 to get 320x200
+wire [8:0] pixel_x = h_cnt[9:1];                         // 0 to 319
+wire [9:0] v_offset = v_cnt - 10'd40;                    // 0 to 399
+wire [7:0] pixel_y  = v_offset[8:1];                     // divide by 2 → 0 to 199
+
+wire [15:0] absolute_pixel = ({8'd0, pixel_y} * 16'd320) + {7'd0, pixel_x};
+
+// VRAM handles 32 bits (4 pixels) per address
+assign vram_read_addr = absolute_pixel[15:2]; 
+assign vram_read_en   = image_active;
+wire [1:0] sub_pixel  = absolute_pixel[1:0];
+
+always @(posedge sys_clk) begin
+    if (!sys_rst_n) begin
+        h_cnt <= 0;
+        v_cnt <= 0;
+        RED <= 0; GREEN <= 0; BLUE <= 0;
+    end else begin
+        // Counters
+        if (h_cnt == H_TOTAL - 1) begin
+            h_cnt <= 10'd0;
+            if (v_cnt == V_TOTAL - 1) v_cnt <= 10'd0;
+            else v_cnt <= v_cnt + 10'd1;
+        end else begin
+            h_cnt <= h_cnt + 10'd1;
+        end
+
+        // Pixel Drawing
+        if (image_active) begin
+            case (sub_pixel)
+                2'd0: begin RED <= vram_read_data[7:5]; GREEN <= vram_read_data[4:2]; BLUE <= vram_read_data[1:0]; end
+                2'd1: begin RED <= vram_read_data[15:13]; GREEN <= vram_read_data[12:10]; BLUE <= vram_read_data[9:8]; end
+                2'd2: begin RED <= vram_read_data[23:21]; GREEN <= vram_read_data[20:18]; BLUE <= vram_read_data[17:16]; end
+                2'd3: begin RED <= vram_read_data[31:29]; GREEN <= vram_read_data[28:26]; BLUE <= vram_read_data[25:24]; end
+            endcase
+        end else begin
+            RED <= 0; GREEN <= 0; BLUE <= 0; // Draw Black Cinematic Borders
+        end
+    end
+end
+endmodule
+

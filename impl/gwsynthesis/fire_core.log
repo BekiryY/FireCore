@@ -1,0 +1,74 @@
+GowinSynthesis start
+Running parser ...
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\CPU_Registers.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\DCache.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\HDMI_Top.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\ICache.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SPI.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC.v'
+Undeclared symbol 'PS2_DATA_DEBUG', assumed default net type 'wire'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC.v":51)
+Undeclared symbol 'PS2_CLK_DEBUG', assumed default net type 'wire'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC.v":52)
+Undeclared symbol 'PS2_DATA_I', assumed default net type 'wire'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC.v":403)
+Undeclared symbol 'PS2_CLK_I', assumed default net type 'wire'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC.v":404)
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC_CPU.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\UART.v'
+WARN  (EX2478) : Non-net output port 'TX' cannot be initialized at declaration in SystemVerilog mode("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\UART.v":11)
+WARN  (EX2478) : Non-net output port 'write_done' cannot be initialized at declaration in SystemVerilog mode("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\UART.v":12)
+WARN  (EX2478) : Non-net output port 'read_done' cannot be initialized at declaration in SystemVerilog mode("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\UART.v":13)
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\VGA.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\ddr3_memory_interface\ddr3_memory_interface.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\dvi_tx\dvi_tx.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\gowin_rpll\gowin_rpll.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\gowin_rpll_2\gowin_rpll_2.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\gowin_sdpb\gowin_sdpb.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\rpll_270\rpll_270.v'
+Analyzing Verilog file 'C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\uart2PS2.v'
+WARN  (EX2478) : Non-net output port 'DOOM_KEYS' cannot be initialized at declaration in SystemVerilog mode("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\uart2PS2.v":36)
+WARN  (EX2478) : Non-net output port 'KEY_EVENT' cannot be initialized at declaration in SystemVerilog mode("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\uart2PS2.v":37)
+WARN  (EX2478) : Non-net output port 'KEY_EV_VALID' cannot be initialized at declaration in SystemVerilog mode("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\uart2PS2.v":38)
+Compiling module 'SoC'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC.v":1)
+Compiling module 'rpll_270'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\rpll_270\rpll_270.v":10)
+Compiling module 'Gowin_rPLL'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\gowin_rpll\gowin_rpll.v":10)
+Compiling module 'DDR3_Memory_Interface_Top'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\ddr3_memory_interface\ddr3_memory_interface.v":11484)
+Compiling module '**'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\ddr3_memory_interface\ddr3_memory_interface.v":11483)
+Compiling module 'UART_Controller(BAUD_RATE=1000000)'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\UART.v":1)
+Compiling module 'SPI_Controller'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SPI.v":1)
+Compiling module 'uart2PS2'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\uart2PS2.v":28)
+Compiling module 'Gowin_rPLL_VGA'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\gowin_rpll_2\gowin_rpll_2.v":10)
+Compiling module 'SoC_CPU'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC_CPU.v":2)
+WARN  (EX3780) : Using initial value of 'div_working' since it is never assigned("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC_CPU.v":200)
+WARN  (EX3780) : Using initial value of 'div_divisor_r' since it is never assigned("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC_CPU.v":201)
+Compiling module 'ICache'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\ICache.v":11)
+Extracting RAM for identifier 'data_mem'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\ICache.v":30)
+Extracting RAM for identifier 'tag_mem'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\ICache.v":31)
+Compiling module 'CPU_Registers'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\CPU_Registers.v":1)
+Extracting RAM for identifier 'registers'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\CPU_Registers.v":19)
+Compiling module 'DCache'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\DCache.v":5)
+Extracting RAM for identifier 'data_mem'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\DCache.v":20)
+Extracting RAM for identifier 'tag_mem'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\DCache.v":21)
+Compiling module 'Gowin_SDPB_VRAM'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\gowin_sdpb\gowin_sdpb.v":10)
+Compiling module 'HDMI_Top'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\HDMI_Top.v":9)
+Compiling module 'VGA_Controller'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\VGA.v":1)
+Compiling module '**'("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\dvi_tx\dvi_tx.v":1088)
+WARN  (EX1998) : Net 'PS2_DATA_I' does not have a driver("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC.v":403)
+WARN  (EX1998) : Net 'PS2_CLK_I' does not have a driver("C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC.v":404)
+NOTE  (EX0101) : Current top module is "SoC"
+[5%] Running netlist conversion ...
+Running device independent optimization ...
+[10%] Optimizing Phase 0 completed
+[15%] Optimizing Phase 1 completed
+[25%] Optimizing Phase 2 completed
+Running inference ...
+[30%] Inferring Phase 0 completed
+[40%] Inferring Phase 1 completed
+[50%] Inferring Phase 2 completed
+[55%] Inferring Phase 3 completed
+Running technical mapping ...
+[60%] Tech-Mapping Phase 0 completed
+[65%] Tech-Mapping Phase 1 completed
+[75%] Tech-Mapping Phase 2 completed
+[80%] Tech-Mapping Phase 3 completed
+[90%] Tech-Mapping Phase 4 completed
+[95%] Generate netlist file "C:\Users\BEK\Desktop\ELE432\deneme\deneme\impl\gwsynthesis\fire_core.vg" completed
+[100%] Generate report file "C:\Users\BEK\Desktop\ELE432\deneme\deneme\impl\gwsynthesis\fire_core_syn.rpt.html" completed
+GowinSynthesis finish

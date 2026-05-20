@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE gowin-synthesis-project>
+<Project>
+    <Version>beta</Version>
+    <Device id="GW2A-18C" package="PBGA256" speed="8" partNumber="GW2A-LV18PG256C8/I7"/>
+    <FileList>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\CPU_Registers.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\DCache.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\HDMI_Top.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\ICache.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SPI.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\SoC_CPU.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\UART.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\VGA.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\ddr3_memory_interface\ddr3_memory_interface.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\dvi_tx\dvi_tx.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\gowin_rpll\gowin_rpll.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\gowin_rpll_2\gowin_rpll_2.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\gowin_sdpb\gowin_sdpb.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\rpll_270\rpll_270.v" type="verilog"/>
+        <File path="C:\Users\BEK\Desktop\ELE432\deneme\deneme\src\uart2PS2.v" type="verilog"/>
+    </FileList>
+    <OptionList>
+        <Option type="disable_insert_pad" value="0"/>
+        <Option type="global_freq" value="100.000"/>
+        <Option type="looplimit" value="2000"/>
+        <Option type="output_file" value="C:\Users\BEK\Desktop\ELE432\deneme\deneme\impl\gwsynthesis\fire_core.vg"/>
+        <Option type="print_all_synthesis_warning" value="0"/>
+        <Option type="ram_rw_check" value="0"/>
+        <Option type="top_module" value="SoC"/>
+        <Option type="vcc" value="1.0"/>
+        <Option type="verilog_language" value="sysv-2017"/>
+        <Option type="vhdl_language" value="vhdl-1993"/>
+    </OptionList>
+</Project>

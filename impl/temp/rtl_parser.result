@@ -1,0 +1,146 @@
+[
+ {
+  "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+  "InstLine" : 1,
+  "InstName" : "SoC",
+  "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+  "ModuleLine" : 1,
+  "ModuleName" : "SoC",
+  "SubInsts" : [
+   {
+    "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+    "InstLine" : 114,
+    "InstName" : "rpll_270_inst",
+    "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/rpll_270/rpll_270.v",
+    "ModuleLine" : 10,
+    "ModuleName" : "rpll_270"
+   },
+   {
+    "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+    "InstLine" : 120,
+    "InstName" : "r_clock",
+    "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/gowin_rpll/gowin_rpll.v",
+    "ModuleLine" : 10,
+    "ModuleName" : "Gowin_rPLL"
+   },
+   {
+    "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+    "InstLine" : 127,
+    "InstName" : "main_ram",
+    "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/ddr3_memory_interface/ddr3_memory_interface.v",
+    "ModuleLine" : 11484,
+    "ModuleName" : "DDR3_Memory_Interface_Top",
+    "SubInsts" : [
+     {
+      "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/ddr3_memory_interface/ddr3_memory_interface.v",
+      "InstLine" : 11569,
+      "InstName" : "gw3_top",
+      "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/ddr3_memory_interface/ddr3_memory_interface.v",
+      "ModuleLine" : 10,
+      "ModuleName" : "~GW_DDR3_PHY_MC.DDR3_Memory_Interface_Top"
+     }
+    ]
+   },
+   {
+    "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+    "InstLine" : 182,
+    "InstName" : "debug_uart",
+    "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/UART.v",
+    "ModuleLine" : 1,
+    "ModuleName" : "UART_Controller"
+   },
+   {
+    "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+    "InstLine" : 204,
+    "InstName" : "spi_inst",
+    "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SPI.v",
+    "ModuleLine" : 1,
+    "ModuleName" : "SPI_Controller"
+   },
+   {
+    "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+    "InstLine" : 400,
+    "InstName" : "u_uart2PS2",
+    "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/uart2PS2.v",
+    "ModuleLine" : 28,
+    "ModuleName" : "uart2PS2"
+   },
+   {
+    "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+    "InstLine" : 421,
+    "InstName" : "u_Gowin_rPLL_VGA",
+    "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/gowin_rpll_2/gowin_rpll_2.v",
+    "ModuleLine" : 10,
+    "ModuleName" : "Gowin_rPLL_VGA"
+   },
+   {
+    "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+    "InstLine" : 467,
+    "InstName" : "u_soc_cpu",
+    "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC_CPU.v",
+    "ModuleLine" : 2,
+    "ModuleName" : "SoC_CPU",
+    "SubInsts" : [
+     {
+      "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC_CPU.v",
+      "InstLine" : 41,
+      "InstName" : "icache_inst",
+      "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/ICache.v",
+      "ModuleLine" : 11,
+      "ModuleName" : "ICache"
+     },
+     {
+      "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC_CPU.v",
+      "InstLine" : 99,
+      "InstName" : "cpu_register_controller",
+      "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/CPU_Registers.v",
+      "ModuleLine" : 1,
+      "ModuleName" : "CPU_Registers"
+     },
+     {
+      "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC_CPU.v",
+      "InstLine" : 244,
+      "InstName" : "dcache_inst",
+      "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/DCache.v",
+      "ModuleLine" : 5,
+      "ModuleName" : "DCache"
+     }
+    ]
+   },
+   {
+    "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+    "InstLine" : 499,
+    "InstName" : "vram",
+    "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/gowin_sdpb/gowin_sdpb.v",
+    "ModuleLine" : 10,
+    "ModuleName" : "Gowin_SDPB_VRAM"
+   },
+   {
+    "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/SoC.v",
+    "InstLine" : 517,
+    "InstName" : "u_hdmi",
+    "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/HDMI_Top.v",
+    "ModuleLine" : 9,
+    "ModuleName" : "HDMI_Top",
+    "SubInsts" : [
+     {
+      "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/HDMI_Top.v",
+      "InstLine" : 81,
+      "InstName" : "u_dvi_tx",
+      "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/dvi_tx/dvi_tx.v",
+      "ModuleLine" : 9,
+      "ModuleName" : "DVI_TX_Top"
+     },
+     {
+      "InstFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/HDMI_Top.v",
+      "InstLine" : 40,
+      "InstName" : "u_vga",
+      "ModuleFile" : "C:/Users/BEK/Desktop/ELE432/deneme/deneme/src/VGA.v",
+      "ModuleLine" : 1,
+      "ModuleName" : "VGA_Controller"
+     }
+    ]
+   }
+  ]
+ }
+]
